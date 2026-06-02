@@ -2,7 +2,6 @@
 
 # dependencies
 node_modules/
-**/node_modules/
 
 # Expo
 .expo/
@@ -26,7 +25,6 @@ expo-env.d.ts
 npm-debug.*
 yarn-debug.*
 yarn-error.*
-pnpm-debug.log*
 
 # macOS
 .DS_Store
@@ -34,10 +32,6 @@ pnpm-debug.log*
 
 # local env files
 .env*.local
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
 
 # typescript
 *.tsbuildinfo
@@ -45,30 +39,3 @@ pnpm-debug.log*
 # generated native folders
 /ios
 /android
-
-# Android builds
-/android/.gradle/
-/android/app/build/
-/android/build/
-/android/**/build/
-
-# Xcode
-ios/Pods/
-build/
-
-# Generated files
-/dist/
-/out/
-
-# Server
-/server/node_modules/
-/server/.env
-*.env
-
-# Uploads and assets
-/uploads/
-/assets/**/uploads/
-
-# Gradle
-/.gradle/
-
