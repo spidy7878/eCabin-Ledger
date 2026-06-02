@@ -23,22 +23,29 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.spidy7878.eCabinLedger",
-      "usesCleartextTraffic": true
+      "usesCleartextTraffic": true,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "extra": {
-      "eas": {
-        "projectId": "8f4a2552-db11-41cb-b11e-7456276e1719"
-      }
-    },
     "plugins": [
       "expo-secure-store",
       "expo-sqlite",
-      ["expo-image-picker", {
-        "cameraPermission": "Allow eCabin Ledger to access your camera for inspection photos."
-      }]
-    ]
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow eCabin Ledger to access your camera for inspection photos."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "83a36c66-0401-4d3d-aedf-9221a347aa63"
+      }
+    },
+    "owner": "uwais_jawed"
   }
 }
