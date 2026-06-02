@@ -22,7 +22,8 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.spidy7878.eCabinLedger"
+      "package": "com.spidy7878.eCabinLedger",
+      "usesCleartextTraffic": true
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -31,6 +32,13 @@
       "eas": {
         "projectId": "8f4a2552-db11-41cb-b11e-7456276e1719"
       }
-    }
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-sqlite",
+      ["expo-image-picker", {
+        "cameraPermission": "Allow eCabin Ledger to access your camera for inspection photos."
+      }]
+    ]
   }
 }

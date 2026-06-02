@@ -7,15 +7,17 @@ type ButtonProps = {
   onPress: () => void;
   icon?: ReactNode;
   style?: any;
+  disabled?: boolean;
 };
 
-export default function Button({ title, onPress, icon, style }: ButtonProps) {
+export default function Button({ title, onPress, icon, style, disabled }: ButtonProps) {
   return (
     <TouchableOpacity
-      onPress={onPress}
+      onPress={disabled ? undefined : onPress}
+      activeOpacity={disabled ? 1 : 0.7}
       style={[
         {
-          backgroundColor: colors.primary,
+          backgroundColor: disabled ? "#9CA3AF" : colors.primary,
           padding: 14,
           borderRadius: 10,
           alignItems: "center",

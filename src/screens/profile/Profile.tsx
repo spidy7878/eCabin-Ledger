@@ -1,18 +1,57 @@
-import React from "react";
-import { View, Text, ScrollView, Image, TouchableOpacity, StyleSheet } from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { spacing } from "../../constants/spacing";
 import { colors } from "../../constants/colors";
 import { Ionicons, MaterialIcons, Feather } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
+import { useAuth } from "../../context/AuthContext";
+import { getQueueStats } from "../../db/imageQueue";
+import { startSync } from "../../services/syncService";
+import { clearSynced } from "../../db/imageQueue";
+
+type QueueStats = { pending: number; uploading: number; synced: number; failed: number; total: number };
 
 export default function Profile() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
+  const { user, logout } = useAuth();
+
+  const [queueStats, setQueueStats] = useState<QueueStats>({ pending: 0, uploading: 0, synced: 0, failed: 0, total: 0 });
+  const [syncing, setSyncing]       = useState(false);
+  const [clearing, setClearing]     = useState(false);
+
+  useEffect(() => {
+    if (user) refreshStats();
+  }, [user]);
+
+  const refreshStats = () => {
+    if (user) getQueueStats(user.userId).then(setQueueStats).catch(() => {});
+  };
+
+  const handleSync = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    await startSync().catch(() => {});
+    refreshStats();
+    setSyncing(false);
+  };
+
+  const handleClearSynced = async () => {
+    if (clearing) return;
+    setClearing(true);
+    await clearSynced().catch(() => {});
+    refreshStats();
+    setClearing(false);
+  };
+
+  const initials = user
+    ? user.fullName.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase()
+    : "?";
 
   return (
     <View style={{ flex: 1, backgroundColor: "#F7F9FB" }}>
-      {/* Custom Header */}
+      {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerIcon}>
           <Ionicons name="arrow-back" size={24} color={colors.primary} />
@@ -24,75 +63,119 @@ export default function Profile() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        
+
         {/* Profile Card */}
         <View style={styles.profileCard}>
+          {/* Avatar initials */}
           <View style={styles.avatarContainer}>
-            <Image
-              source={{ uri: "https://novapicsly.com/wp-content/uploads/2026/02/aesthetic-spider-man-pfp-foggy-night-city-atmosphere-768x768.webp" }}
-              style={styles.avatar}
-            />
-            <View style={styles.editBadge}>
-              <MaterialIcons name="edit" size={14} color="#FFF" />
+            <View style={styles.avatar}>
+              <Text style={styles.avatarInitials}>{initials}</Text>
             </View>
           </View>
-          <Text style={styles.userName}>User</Text>
-          <Text style={styles.userEmail}>user@ecabinledger.com</Text>
+          <Text style={styles.userName}>{user?.fullName ?? "—"}</Text>
+          <Text style={styles.userEmail}>{user?.email ?? "—"}</Text>
           <View style={styles.roleBadge}>
-            <Text style={styles.roleText}>Senior Inspector</Text>
+            <Text style={styles.roleText}>{user?.role ?? "—"}</Text>
           </View>
         </View>
 
-        {/* Professional Details Section */}
+        {/* Professional Details */}
         <Text style={styles.sectionHeader}>PROFESSIONAL DETAILS</Text>
         <View style={styles.detailsCard}>
           <View style={styles.detailRow}>
             <View style={styles.detailIconContainer}>
-              <Feather name="phone-call" size={20} color={colors.primary} />
+              <Feather name="user" size={20} color={colors.primary} />
             </View>
             <View>
-              <Text style={styles.detailLabel}>Phone No.</Text>
-              <Text style={styles.detailValue}>+91 99090 00900</Text>
+              <Text style={styles.detailLabel}>Username</Text>
+              <Text style={styles.detailValue}>{user?.username ?? "—"}</Text>
             </View>
           </View>
-          
-          <View style={styles.dividerContainer}>
-            <View style={styles.dividerLine} />
-            <View style={styles.dividerDot} />
-            <View style={styles.dividerLine} />
-          </View>
+
+          <View style={styles.divider} />
 
           <View style={styles.detailRow}>
             <View style={styles.detailIconContainer}>
-              <MaterialIcons name="domain" size={20} color={colors.primary} />
+              <MaterialIcons name="badge" size={20} color={colors.primary} />
             </View>
             <View>
-              <Text style={styles.detailLabel}>Operator</Text>
-              <Text style={styles.detailValue}>Macron Technology</Text>
+              <Text style={styles.detailLabel}>Employee ID</Text>
+              <Text style={styles.detailValue}>{user?.employeeId ?? "—"}</Text>
+            </View>
+          </View>
+
+          <View style={styles.divider} />
+
+          <View style={styles.detailRow}>
+            <View style={styles.detailIconContainer}>
+              <MaterialIcons name="email" size={20} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.detailLabel}>Email</Text>
+              <Text style={styles.detailValue} numberOfLines={1}>{user?.email ?? "—"}</Text>
             </View>
           </View>
         </View>
 
-        {/* Account Settings Section */}
-        <Text style={styles.sectionHeader}>ACCOUNT SETTINGS</Text>
-        <View style={styles.settingsCard}>
-          <TouchableOpacity style={styles.settingsRow}>
-            <View style={[styles.detailIconContainer, { backgroundColor: "#F0F4F8" }]}>
-              <Ionicons name="lock-closed-outline" size={20} color={colors.primary} />
-            </View>
-            <Text style={styles.settingsText}>Change Password</Text>
-            <MaterialIcons name="chevron-right" size={24} color="#111" />
+        {/* Image Queue Section */}
+        <Text style={styles.sectionHeader}>IMAGE QUEUE</Text>
+        <View style={styles.detailsCard}>
+          {/* Stats row */}
+          <View style={{ flexDirection: "row", justifyContent: "space-around", marginBottom: 16 }}>
+            {([
+              { label: "Pending",  value: queueStats.pending,  color: "#F59E0B" },
+              { label: "Synced",   value: queueStats.synced,   color: colors.success },
+              { label: "Failed",   value: queueStats.failed,   color: colors.danger },
+              { label: "Total",    value: queueStats.total,    color: colors.primary },
+            ] as const).map((s) => (
+              <View key={s.label} style={{ alignItems: "center" }}>
+                <Text style={{ fontSize: 22, fontWeight: "700", color: s.color }}>{s.value}</Text>
+                <Text style={{ fontSize: 11, color: "#6B7280", marginTop: 2 }}>{s.label}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* Sync now button */}
+          <TouchableOpacity
+            onPress={handleSync}
+            disabled={syncing}
+            style={[
+              styles.actionButton,
+              { backgroundColor: syncing ? "#E5E7EB" : colors.primary },
+            ]}
+          >
+            {syncing ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Feather name="upload-cloud" size={16} color="#FFF" style={{ marginRight: 8 }} />
+            )}
+            <Text style={{ color: syncing ? "#6B7280" : "#FFF", fontWeight: "600", fontSize: 14 }}>
+              {syncing ? "Syncing…" : "Sync Now"}
+            </Text>
           </TouchableOpacity>
+
+          {/* Clear synced button */}
+          {queueStats.synced > 0 && (
+            <TouchableOpacity
+              onPress={handleClearSynced}
+              disabled={clearing}
+              style={[styles.actionButton, { backgroundColor: "#F0FDF4", borderWidth: 1, borderColor: "#BBF7D0", marginTop: 8 }]}
+            >
+              <Feather name="trash-2" size={16} color={colors.success} style={{ marginRight: 8 }} />
+              <Text style={{ color: colors.success, fontWeight: "600", fontSize: 14 }}>
+                {clearing ? "Clearing…" : `Clear ${queueStats.synced} synced image${queueStats.synced > 1 ? "s" : ""}`}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        {/* Logout Button */}
-        <TouchableOpacity style={styles.logoutButton}>
+        {/* Logout */}
+        <TouchableOpacity style={styles.logoutButton} onPress={logout}>
           <MaterialIcons name="logout" size={20} color="#D32F2F" style={{ marginRight: 8 }} />
-          <Text style={styles.logoutText}>Logout</Text>
+          <Text style={styles.logoutText}>Sign Out</Text>
         </TouchableOpacity>
 
-        {/* Version Info */}
-        <Text style={styles.versionText}>eCabin Version 2.4.1 (Build 822)</Text>
+        <Text style={styles.versionText}>eCabin Ledger v1.0.0</Text>
       </ScrollView>
     </View>
   );
@@ -117,6 +200,18 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: colors.primary,
   },
+  actionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: "#F0F0F0",
+    marginVertical: 14,
+  },
   scrollContent: {
     padding: spacing.md,
     paddingBottom: spacing.xl * 2,
@@ -136,27 +231,20 @@ const styles = StyleSheet.create({
     borderColor: "#F0F0F0",
   },
   avatarContainer: {
-    position: "relative",
     marginBottom: spacing.sm,
   },
   avatar: {
     width: 80,
     height: 80,
     borderRadius: 20,
-    backgroundColor: "#E2E8F0",
-  },
-  editBadge: {
-    position: "absolute",
-    bottom: -4,
-    right: -4,
     backgroundColor: colors.primary,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
     justifyContent: "center",
     alignItems: "center",
-    borderWidth: 2,
-    borderColor: "#FFF",
+  },
+  avatarInitials: {
+    fontSize: 28,
+    fontWeight: "700",
+    color: "#FFF",
   },
   userName: {
     fontSize: 22,
@@ -220,46 +308,6 @@ const styles = StyleSheet.create({
   },
   detailValue: {
     fontSize: 15,
-    fontWeight: "600",
-    color: "#111",
-  },
-  dividerContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginVertical: 16,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: "#F0F0F0",
-  },
-  dividerDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#F97316",
-    marginHorizontal: 8,
-  },
-  settingsCard: {
-    backgroundColor: "#FFF",
-    borderRadius: 12,
-    marginBottom: 32,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: "#F0F0F0",
-  },
-  settingsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: spacing.md,
-  },
-  settingsText: {
-    flex: 1,
-    fontSize: 16,
     fontWeight: "600",
     color: "#111",
   },

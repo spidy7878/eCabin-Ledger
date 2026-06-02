@@ -10,7 +10,7 @@ import Button from "../../components/Button";
 import WorkflowProgress from "../../components/WorkflowProgress";
 import { spacing } from "../../constants/spacing";
 import { colors } from "../../constants/colors";
-import { api, Galley as GalleyType, SubCategory, Part, IssueType } from "../../services/api";
+import { api, Lavatory as LavatoryType, SubCategory, Part, IssueType } from "../../services/api";
 import { useAircraft } from "../../context/AircraftContext";
 import { useAuth } from "../../context/AuthContext";
 import { useWorkflow } from "../../context/WorkflowContext";
@@ -48,22 +48,22 @@ const LoadingRow = () => (
   </View>
 );
 
-export default function Galley() {
+export default function Lavatory() {
   const insets = useSafeAreaInsets();
   const { selectedAircraft } = useAircraft();
   const { user } = useAuth();
   const { isWorkflow, endWorkflow } = useWorkflow();
   const navigation = useNavigation();
 
-  // ── zone (galleys from DB) ──
-  const [galleys, setGalleys] = useState<GalleyType[]>([]);
-  const [loadingGalleys, setLoadingGalleys] = useState(false);
-  const [activeGalley, setActiveGalley] = useState<GalleyType | null>(null);
+  // ── zone (lavatories from DB) ──
+  const [lavatories, setLavatories] = useState<LavatoryType[]>([]);
+  const [loadingLavs, setLoadingLavs] = useState(false);
+  const [activeLav, setActiveLav] = useState<LavatoryType | null>(null);
 
-  // ── subcategory map (CatID=2 → G1/G2/G4B) ──
-  const [galleySubCats, setGalleySubCats] = useState<SubCategory[]>([]);
+  // ── subcategory map (CatID=3 → LAV A/D/E) ──
+  const [lavSubCats, setLavSubCats] = useState<SubCategory[]>([]);
 
-  // ── items (parts for selected galley) ──
+  // ── items (parts for selected lavatory) ──
   const [items, setItems] = useState<Part[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
   const [activeItem, setActiveItem] = useState<string | null>(null);
@@ -82,19 +82,19 @@ export default function Galley() {
 
   const registration = selectedAircraft?.Registration ?? "N/A";
 
-  // Load galleys, galley subcats, issue types together
+  // Load lavatories, lav subcats, issue types together
   useEffect(() => {
-    setLoadingGalleys(true);
-    api.getGalleys(selectedAircraft?.AircraftId)
+    setLoadingLavs(true);
+    api.getLavatories(selectedAircraft?.AircraftId)
       .then((data) => {
-        setGalleys(data);
-        if (data.length > 0) setActiveGalley(data[0]);
+        setLavatories(data);
+        if (data.length > 0) setActiveLav(data[0]);
       })
-      .catch(() => setGalleys([]))
-      .finally(() => setLoadingGalleys(false));
+      .catch(() => setLavatories([]))
+      .finally(() => setLoadingLavs(false));
 
-    api.getSubCategories("2")
-      .then(setGalleySubCats)
+    api.getSubCategories("3")
+      .then(setLavSubCats)
       .catch(() => {});
 
     setLoadingIssues(true);
@@ -104,12 +104,12 @@ export default function Galley() {
       .finally(() => setLoadingIssues(false));
   }, [selectedAircraft?.AircraftId]);
 
-  // Load parts when active galley changes
+  // Load parts when active lavatory changes
   useEffect(() => {
-    if (!activeGalley || !selectedAircraft) return;
-    // Match galley code → SubCatID (e.g. "G1" → SubCatID 10)
-    const subCat = galleySubCats.find(
-      (sc) => sc.SubCatName.trim().toUpperCase() === activeGalley.GalleyCode.trim().toUpperCase()
+    if (!activeLav || !selectedAircraft) return;
+    // Match lav code → SubCatID (e.g. "LAV A" → SubCatID 13)
+    const subCat = lavSubCats.find(
+      (sc) => sc.SubCatName.trim().toUpperCase() === activeLav.LavatoriesCode.trim().toUpperCase()
     );
     if (!subCat) return;
 
@@ -122,16 +122,16 @@ export default function Galley() {
       })
       .catch(() => setItems([]))
       .finally(() => setLoadingItems(false));
-  }, [activeGalley?.GalleyId, galleySubCats]);
+  }, [activeLav?.LavatoriesId, lavSubCats]);
 
-  // Reset workflow when galley changes
+  // Reset workflow when lavatory changes
   useEffect(() => {
     setActiveItem(null);
     setImages([]);
     setSatisfaction(null);
     setSelectedIssue(null);
     setRemarks("");
-  }, [activeGalley?.GalleyId]);
+  }, [activeLav?.LavatoriesId]);
 
   const handleTakePhoto = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -150,7 +150,7 @@ export default function Galley() {
 
   const handleSubmit = async () => {
     if (!selectedAircraft) return Alert.alert("No aircraft", "Select an aircraft on the Home tab first.");
-    if (!activeGalley)     return Alert.alert("Missing", "Select a galley.");
+    if (!activeLav)        return Alert.alert("Missing", "Select a lavatory.");
     if (!activeItem)       return Alert.alert("Missing", "Select an item to inspect.");
     if (images.length === 0) return Alert.alert("No photos", "Take at least one photo.");
     if (!satisfaction)     return Alert.alert("Missing", "Mark Satisfied or Not Satisfied.");
@@ -163,9 +163,9 @@ export default function Galley() {
           inspector_name: user!.fullName,
           aircraft_id:    selectedAircraft.AircraftId,
           aircraft_msn:   selectedAircraft.MSN,
-          zone_type:      "galley",
-          zone_id:        activeGalley.GalleyId,
-          zone_name:      activeGalley.GalleyCode,
+          zone_type:      "lavatory",
+          zone_id:        activeLav.LavatoriesId,
+          zone_name:      activeLav.LavatoriesCode,
           part_name:      activeItem,
           issue_id:       selectedIssue?.IssueID ?? null,
           issue_name:     selectedIssue?.IssueName ?? null,
@@ -181,11 +181,11 @@ export default function Galley() {
       startSync().catch(() => {});
       if (isWorkflow) {
         Alert.alert(
-          "Galley Saved ✓",
-          `${count} photo${count > 1 ? "s" : ""} queued. Continue to Lavatory?`,
+          "Lavatory Saved ✓",
+          `${count} photo${count > 1 ? "s" : ""} queued. Continue to Attendant?`,
           [
             { text: "Add More", style: "cancel" },
-            { text: "Next: Lavatory →", onPress: () => navigation.navigate("Lavatory" as never) },
+            { text: "Next: Attendant →", onPress: () => navigation.navigate("Attendant" as never) },
           ]
         );
       } else {
@@ -278,40 +278,44 @@ export default function Galley() {
         }}
       >
         {/* Workflow progress bar */}
-        {isWorkflow && <WorkflowProgress step={1} onExit={endWorkflow} />}
-        {/* ── 1. Galley Zone ── */}
-        <SectionTitle title={`SELECT GALLEY ZONE FOR ${registration}`} />
-        {loadingGalleys ? (
+        {isWorkflow && <WorkflowProgress step={2} onExit={endWorkflow} />}
+        {/* ── 1. Lavatory Zone ── */}
+        <SectionTitle title={`SELECT LAVATORY FOR ${registration}`} />
+        {loadingLavs ? (
           <LoadingRow />
-        ) : galleys.length === 0 ? (
-          <Text style={{ color: "#6B7280", marginBottom: 16, fontSize: 12 }}>No galleys found.</Text>
+        ) : lavatories.length === 0 ? (
+          <Text style={{ color: "#6B7280", marginBottom: 16, fontSize: 12 }}>No lavatories found.</Text>
         ) : (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-            {galleys.map((g) => (
+            {lavatories.map((lav) => (
               <Pill
-                key={g.GalleyId}
-                label={g.GalleyCode}
-                active={activeGalley?.GalleyId === g.GalleyId}
-                onPress={() => setActiveGalley(g)}
+                key={lav.LavatoriesId}
+                label={lav.LavatoriesCode}
+                active={activeLav?.LavatoriesId === lav.LavatoriesId}
+                onPress={() => setActiveLav(lav)}
               />
             ))}
           </ScrollView>
         )}
 
-        {activeGalley && (
-          <Text style={{ fontSize: 11, color: "#6B7280", marginBottom: 4 }}>
-            {activeGalley.GalleyName} · {activeGalley.Location} · Status:{" "}
-            <Text style={{ color: activeGalley.Status === "Operational" ? colors.success : colors.danger }}>
-              {activeGalley.Status}
+        {activeLav && (
+          <View style={{ marginBottom: 4 }}>
+            <Text style={{ fontSize: 11, color: "#6B7280" }}>
+              {activeLav.LavatoriesName} · {activeLav.Location} · Type: {activeLav.LavatoriesType} · Status:{" "}
+              <Text style={{ color: activeLav.Status === "Operational" ? colors.success : colors.danger }}>
+                {activeLav.Status}
+              </Text>
             </Text>
-            {activeGalley.LastInspectionDate
-              ? ` · Last: ${new Date(activeGalley.LastInspectionDate).toLocaleDateString()}`
-              : ""}
-          </Text>
+            {activeLav.LastInspectionDate && (
+              <Text style={{ fontSize: 10, color: "#9CA3AF", marginTop: 2 }}>
+                Last inspected: {new Date(activeLav.LastInspectionDate).toLocaleDateString()}
+              </Text>
+            )}
+          </View>
         )}
 
         {/* ── 2. Item Selection ── */}
-        <SectionTitle title={`SELECT ITEM FOR ${activeGalley?.GalleyCode ?? "—"}`} />
+        <SectionTitle title={`SELECT ITEM FOR ${activeLav?.LavatoriesCode ?? "—"}`} />
         {loadingItems ? (
           <LoadingRow />
         ) : (
@@ -324,8 +328,8 @@ export default function Galley() {
                 onPress={() => setActiveItem(it.PartName)}
               />
             ))}
-            {!loadingItems && items.length === 0 && activeGalley && (
-              <Text style={{ fontSize: 12, color: "#9CA3AF" }}>No items for this galley</Text>
+            {!loadingItems && items.length === 0 && activeLav && (
+              <Text style={{ fontSize: 12, color: "#9CA3AF" }}>No items for this lavatory</Text>
             )}
           </ScrollView>
         )}
@@ -341,14 +345,14 @@ export default function Galley() {
               paddingVertical: 12, paddingHorizontal: 16, marginBottom: 20,
               flexDirection: "row", alignItems: "center",
             }}>
-              <Text style={{ fontSize: 16, marginRight: 8 }}>🔧</Text>
+              <Text style={{ fontSize: 16, marginRight: 8 }}>🚿</Text>
               <Text style={{ fontSize: 13, fontWeight: "700", color: "white", flex: 1 }} numberOfLines={1}>
                 {activeItem}
               </Text>
             </View>
           ) : (
             <View style={{ backgroundColor: "#F3F4F6", borderRadius: 8, paddingVertical: 12, paddingHorizontal: 16, marginBottom: 20 }}>
-              <Text style={{ fontSize: 12, color: "#9CA3AF" }}>Select a galley and item above to begin inspection</Text>
+              <Text style={{ fontSize: 12, color: "#9CA3AF" }}>Select a lavatory and item above to begin inspection</Text>
             </View>
           )}
 

@@ -1,100 +1,171 @@
 import React, { useState } from "react";
-import { View, Text, TouchableOpacity } from "react-native";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Input from "../../components/Input";
 import Button from "../../components/Button";
 import { spacing } from "../../constants/spacing";
 import { colors } from "../../constants/colors";
+import { useAuth } from "../../context/AuthContext";
 
-export default function SignIn({ onSignIn }: any) {
+export default function SignIn() {
   const insets = useSafeAreaInsets();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [show, setShow] = useState(false);
+  const { login } = useAuth();
 
-  const handleLogin = () => {
-    if (email === "name@company.com" && password === "password123") {
-      onSignIn && onSignIn();
-    } else {
-      alert("Invalid credentials. Use name@company.com / password123");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [show,     setShow]     = useState(false);
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState<string | null>(null);
+
+  const handleLogin = async () => {
+    if (!username.trim() || !password) {
+      setError("Please enter your username and password.");
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      await login(username.trim(), password);
+      // Navigation is handled automatically by AppNavigator when user state updates
+    } catch (e: any) {
+      setError(e?.message?.includes("401")
+        ? "Invalid username or password. Please try again."
+        : "Could not connect to server. Check your network.");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: "#F7F9FB", paddingTop: insets.top, paddingHorizontal: spacing.lg, paddingBottom: insets.bottom }}>
-      <View style={{ alignItems: "center", marginTop: 40 }}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+      <ScrollView
+        contentContainerStyle={{
+          flexGrow: 1,
+          backgroundColor: "#F7F9FB",
+          paddingTop: insets.top,
+          paddingHorizontal: spacing.lg,
+          paddingBottom: insets.bottom + 24,
+        }}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Logo */}
+        <View style={{ alignItems: "center", marginTop: 48 }}>
+          <View
+            style={{
+              width: 84,
+              height: 84,
+              borderRadius: 18,
+              backgroundColor: colors.primary,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Text style={{ fontSize: 36 }}>✈️</Text>
+          </View>
+          <Text style={{ fontSize: 22, marginTop: 16, color: colors.text, fontWeight: "700" }}>
+            eCabin Ledger
+          </Text>
+          <Text style={{ fontSize: 13, color: "#6B7280", marginTop: 4 }}>
+            Inspector Portal
+          </Text>
+        </View>
+
+        {/* Card */}
         <View
           style={{
-            width: 84,
-            height: 84,
-            borderRadius: 18,
-            backgroundColor: colors.primary,
-            alignItems: "center",
-            justifyContent: "center",
+            marginTop: 36,
+            backgroundColor: "white",
+            padding: 24,
+            borderRadius: 14,
+            shadowColor: "#000",
+            shadowOpacity: 0.05,
+            shadowRadius: 10,
+            elevation: 3,
           }}
         >
-          <Text style={{ color: "white", fontWeight: "700", fontSize: 28 }}>✈️</Text>
-        </View>
-        <Text style={{ fontSize: 22, marginTop: 18, color: colors.text, fontWeight: "700" }}>
-          eCabin Ledger
-        </Text>
-      </View>
+          <Text style={{ fontSize: 18, fontWeight: "700", color: colors.text, marginBottom: 4 }}>
+            Sign In
+          </Text>
+          <Text style={{ color: "#6B7280", fontSize: 13, marginBottom: 20 }}>
+            Use your employee credentials to access inspection tasks.
+          </Text>
 
-      <View
-        style={{
-          marginTop: 32,
-          backgroundColor: "white",
-          padding: 20,
-          borderRadius: 12,
-          shadowColor: "#000",
-          shadowOpacity: 0.03,
-          shadowRadius: 8,
-          elevation: 2,
-        }}
-      >
-        <Text style={{ fontSize: 18, fontWeight: "600", marginBottom: 8 }}>Sign-In</Text>
-        <Text style={{ color: "#6B7280", marginBottom: 12 }}>
-          Enter credentials to access flight deck logs.
-        </Text>
+          <Input
+            label="Username or Email"
+            value={username}
+            onChangeText={(t) => { setUsername(t); setError(null); }}
+            placeholder="e.g. BIKRAMSI"
+            autoCapitalize="none"
+            keyboardType="email-address"
+          />
 
-        <Input
-          label="Email Address"
-          placeholder="name@company.com"
-          value={email}
-          onChangeText={setEmail}
-          leftIcon={<Text style={{ fontSize: 16 }}>✉️</Text>}
-        />
-
-        <Input
-          label="Secure Password"
-          placeholder="Enter password"
-          value={password}
-          onChangeText={setPassword}
-          secure={!show}
-          leftIcon={<Text style={{ fontSize: 16 }}>🔒</Text>}
-          rightIcon={(
-            <TouchableOpacity onPress={() => setShow((s) => !s)}>
-              <Text style={{ fontSize: 16 }}>{show ? "👁️" : "👁️‍🗨️"}</Text>
+          <View style={{ marginTop: 16 }}>
+            <Input
+              label="Password"
+              value={password}
+              onChangeText={(t) => { setPassword(t); setError(null); }}
+              placeholder="Enter your password"
+              secureTextEntry={!show}
+            />
+            <TouchableOpacity
+              onPress={() => setShow((s) => !s)}
+              style={{ position: "absolute", right: 12, top: 38 }}
+            >
+              <Text style={{ color: colors.primary, fontSize: 13 }}>
+                {show ? "Hide" : "Show"}
+              </Text>
             </TouchableOpacity>
+          </View>
+
+          {error && (
+            <View
+              style={{
+                marginTop: 14,
+                backgroundColor: "#FEF2F2",
+                borderRadius: 8,
+                padding: 10,
+                borderLeftWidth: 3,
+                borderLeftColor: colors.danger,
+              }}
+            >
+              <Text style={{ color: colors.danger, fontSize: 13 }}>{error}</Text>
+            </View>
           )}
-        />
 
-        <Button
-          title="LOGIN"
-          onPress={handleLogin}
-          icon={<Text style={{ color: "white" }}>➡️</Text>}
-          style={{ marginTop: 8 }}
-        />
+          <View style={{ marginTop: 24 }}>
+            {loading ? (
+              <ActivityIndicator color={colors.primary} size="large" />
+            ) : (
+              <Button
+                title="Sign In"
+                onPress={handleLogin}
+              />
+            )}
+          </View>
+        </View>
 
-        <TouchableOpacity style={{ marginTop: 10, alignItems: "center" }}>
-          <Text style={{ color: colors.primary }}>Forgot Password ?</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={{ flex: 1 }} />
-      <Text style={{ textAlign: "center", color: "#9CA3AF", marginBottom: 12 }}>
-        © eCabin Ledger v1.0.1
-      </Text>
-    </View>
+        <Text
+          style={{
+            textAlign: "center",
+            color: "#9CA3AF",
+            fontSize: 11,
+            marginTop: 32,
+          }}
+        >
+          Contact your administrator if you cannot access your account.
+        </Text>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
