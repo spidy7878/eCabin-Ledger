@@ -10,7 +10,7 @@ import Button from "../../components/Button";
 import WorkflowProgress from "../../components/WorkflowProgress";
 import { spacing } from "../../constants/spacing";
 import { colors } from "../../constants/colors";
-import { api, Galley as GalleyType, SubCategory, Part, IssueType } from "../../services/api";
+import { api, Galley as GalleyType, Part, IssueType } from "../../services/api";
 import { useAircraft } from "../../context/AircraftContext";
 import { useAuth } from "../../context/AuthContext";
 import { useWorkflow } from "../../context/WorkflowContext";
@@ -60,9 +60,6 @@ export default function Galley() {
   const [loadingGalleys, setLoadingGalleys] = useState(false);
   const [activeGalley, setActiveGalley] = useState<GalleyType | null>(null);
 
-  // ── subcategory map (CatID=2 → G1/G2/G4B) ──
-  const [galleySubCats, setGalleySubCats] = useState<SubCategory[]>([]);
-
   // ── items (parts for selected galley) ──
   const [items, setItems] = useState<Part[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -82,20 +79,24 @@ export default function Galley() {
 
   const registration = selectedAircraft?.Registration ?? "N/A";
 
-  // Load galleys, galley subcats, issue types together
+  // Load galleys and issue types together
   useEffect(() => {
+    if (!selectedAircraft) return;
     setLoadingGalleys(true);
-    api.getGalleys(selectedAircraft?.AircraftId)
+    api.getGalleys(selectedAircraft.AircraftId)
       .then((data) => {
-        setGalleys(data);
-        if (data.length > 0) setActiveGalley(data[0]);
+        // Deduplicate by GalleyCode in case DB has duplicate rows
+        const seen = new Set<string>();
+        const unique = data.filter((g) => {
+          if (seen.has(g.GalleyCode)) return false;
+          seen.add(g.GalleyCode);
+          return true;
+        });
+        setGalleys(unique);
+        if (unique.length > 0) setActiveGalley(unique[0]);
       })
       .catch(() => setGalleys([]))
       .finally(() => setLoadingGalleys(false));
-
-    api.getSubCategories("2")
-      .then(setGalleySubCats)
-      .catch(() => {});
 
     setLoadingIssues(true);
     api.getIssueTypes()
@@ -104,25 +105,24 @@ export default function Galley() {
       .finally(() => setLoadingIssues(false));
   }, [selectedAircraft?.AircraftId]);
 
-  // Load parts when active galley changes
+  // Load parts when active galley or aircraft changes
   useEffect(() => {
     if (!activeGalley || !selectedAircraft) return;
-    // Match galley code → SubCatID (e.g. "G1" → SubCatID 10)
-    const subCat = galleySubCats.find(
-      (sc) => sc.SubCatName.trim().toUpperCase() === activeGalley.GalleyCode.trim().toUpperCase()
-    );
-    if (!subCat) return;
+    if (!activeGalley.SubCatID) {
+      setItems([]);
+      return;
+    }
 
     setLoadingItems(true);
     setActiveItem(null);
-    api.getParts(subCat.SubCatID, selectedAircraft.AircraftId)
+    api.getParts(activeGalley.SubCatID, selectedAircraft.AircraftId)
       .then((data) => {
         setItems(data);
         if (data.length > 0) setActiveItem(data[0].PartName);
       })
       .catch(() => setItems([]))
       .finally(() => setLoadingItems(false));
-  }, [activeGalley?.GalleyId, galleySubCats]);
+  }, [activeGalley?.GalleyId, selectedAircraft?.AircraftId]);
 
   // Reset workflow when galley changes
   useEffect(() => {

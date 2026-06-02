@@ -1,6 +1,23 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import { api, AuthUser, setAuthToken, setOnUnauthorized } from "../services/api";
+
+// expo-secure-store is not available on web — fall back to localStorage.
+const store = {
+  async get(key: string): Promise<string | null> {
+    if (Platform.OS === "web") return localStorage.getItem(key);
+    return SecureStore.getItemAsync(key);
+  },
+  async set(key: string, value: string): Promise<void> {
+    if (Platform.OS === "web") { localStorage.setItem(key, value); return; }
+    await SecureStore.setItemAsync(key, value);
+  },
+  async remove(key: string): Promise<void> {
+    if (Platform.OS === "web") { localStorage.removeItem(key); return; }
+    await SecureStore.deleteItemAsync(key);
+  },
+};
 
 const TOKEN_KEY = "ecabin_auth_token";
 const USER_KEY  = "ecabin_auth_user";
@@ -30,8 +47,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
-        const stored = await SecureStore.getItemAsync(TOKEN_KEY);
-        const storedUser = await SecureStore.getItemAsync(USER_KEY);
+        const stored = await store.get(TOKEN_KEY);
+        const storedUser = await store.get(USER_KEY);
         if (stored && storedUser) {
           setToken(stored);
           setUser(JSON.parse(storedUser));
@@ -39,8 +56,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {
         // Corrupted store — clear it
-        await SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {});
-        await SecureStore.deleteItemAsync(USER_KEY).catch(() => {});
+        await store.remove(TOKEN_KEY).catch(() => {});
+        await store.remove(USER_KEY).catch(() => {});
       } finally {
         setLoading(false);
       }
@@ -49,16 +66,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (username: string, password: string) => {
     const res = await api.login(username, password);
-    await SecureStore.setItemAsync(TOKEN_KEY, res.token);
-    await SecureStore.setItemAsync(USER_KEY, JSON.stringify(res.user));
+    await store.set(TOKEN_KEY, res.token);
+    await store.set(USER_KEY, JSON.stringify(res.user));
     setAuthToken(res.token);
     setToken(res.token);
     setUser(res.user);
   };
 
   const logout = async () => {
-    await SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {});
-    await SecureStore.deleteItemAsync(USER_KEY).catch(() => {});
+    await store.remove(TOKEN_KEY).catch(() => {});
+    await store.remove(USER_KEY).catch(() => {});
     setAuthToken(null);
     setToken(null);
     setUser(null);

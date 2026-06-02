@@ -267,16 +267,16 @@ export default function Home() {
       .then(([aircraft, dash]) => {
         setDashboard(dash);
 
-        // Only surface aircraft that actually have tasks assigned to the
-        // logged-in inspector.  For Admin / Manager the task list contains
-        // all aircraft so nothing is filtered out.  For a User (inspector)
-        // only their assigned aircraft appear.
-        const assignedIds = new Set(dash.tasks.map((t) => t.AircraftId));
-        const filtered = aircraft.filter((ac) => assignedIds.has(ac.AircraftId));
-        setAircraftList(filtered);
+        // The /aircraft endpoint already scopes the list to what the signed-in
+        // user may inspect (Admin/Manager → whole fleet; inspector → their
+        // operator's aircraft).  Use it directly as the selectable list — do
+        // NOT intersect it with dash.tasks, or an inspector with no matching
+        // audit rows would be left with no selectable aircraft, which silently
+        // broke the Galley/Lavatory/Attendant item & parts pickers.
+        setAircraftList(aircraft);
 
-        if (filtered.length > 0 && !selectedAircraft) {
-          setSelectedAircraft(filtered[0]);
+        if (aircraft.length > 0 && !selectedAircraft) {
+          setSelectedAircraft(aircraft[0]);
         }
       })
       .catch((e) => setError(e.message))

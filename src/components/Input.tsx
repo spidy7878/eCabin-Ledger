@@ -1,28 +1,20 @@
 import React, { ReactNode } from "react";
-import { View, TextInput, Text } from "react-native";
+import { View, TextInput, Text, TextInputProps } from "react-native";
 import { colors } from "../constants/colors";
 import { spacing } from "../constants/spacing";
 
-type InputProps = {
+type InputProps = TextInputProps & {
 	label?: string;
-	placeholder?: string;
-	secure?: boolean;
-	value?: string;
-	onChangeText?: (t: string) => void;
-	style?: any;
 	leftIcon?: ReactNode;
 	rightIcon?: ReactNode;
 };
 
 export default function Input({
 	label,
-	placeholder,
-	secure,
-	value,
-	onChangeText,
-	style,
 	leftIcon,
 	rightIcon,
+	style,
+	...textInputProps
 }: InputProps) {
 	return (
 		<View style={{ marginVertical: spacing.sm }}>
@@ -44,12 +36,9 @@ export default function Input({
 			>
 				{leftIcon ? <View style={{ marginRight: 8 }}>{leftIcon}</View> : null}
 				<TextInput
-					value={value}
-					onChangeText={onChangeText}
-					placeholder={placeholder}
-					secureTextEntry={secure}
 					placeholderTextColor="#9CA3AF"
 					style={[{ flex: 1, color: colors.text, padding: 0 }, style]}
+					{...textInputProps}
 				/>
 				{rightIcon ? <View style={{ marginLeft: 8 }}>{rightIcon}</View> : null}
 			</View>

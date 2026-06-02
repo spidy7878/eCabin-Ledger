@@ -36,9 +36,16 @@ export default function SignIn() {
       await login(username.trim(), password);
       // Navigation is handled automatically by AppNavigator when user state updates
     } catch (e: any) {
-      setError(e?.message?.includes("401")
-        ? "Invalid username or password. Please try again."
-        : "Could not connect to server. Check your network.");
+      const msg: string = e?.message ?? "";
+      setError(
+        msg.includes("401")
+          ? "Invalid username or password. Please try again."
+          : msg.includes("Session expired")
+          ? "Session expired. Please sign in again."
+          : msg.match(/^(Failed to fetch|Network request failed|TypeError)/)
+          ? "Could not connect to server. Check your network."
+          : `Sign-in failed: ${msg || "unknown error"}`
+      );
     } finally {
       setLoading(false);
     }

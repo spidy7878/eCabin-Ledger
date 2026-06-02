@@ -10,7 +10,7 @@ import Button from "../../components/Button";
 import WorkflowProgress from "../../components/WorkflowProgress";
 import { spacing } from "../../constants/spacing";
 import { colors } from "../../constants/colors";
-import { api, Lavatory as LavatoryType, SubCategory, Part, IssueType } from "../../services/api";
+import { api, Lavatory as LavatoryType, Part, IssueType } from "../../services/api";
 import { useAircraft } from "../../context/AircraftContext";
 import { useAuth } from "../../context/AuthContext";
 import { useWorkflow } from "../../context/WorkflowContext";
@@ -60,9 +60,6 @@ export default function Lavatory() {
   const [loadingLavs, setLoadingLavs] = useState(false);
   const [activeLav, setActiveLav] = useState<LavatoryType | null>(null);
 
-  // ── subcategory map (CatID=3 → LAV A/D/E) ──
-  const [lavSubCats, setLavSubCats] = useState<SubCategory[]>([]);
-
   // ── items (parts for selected lavatory) ──
   const [items, setItems] = useState<Part[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -82,20 +79,24 @@ export default function Lavatory() {
 
   const registration = selectedAircraft?.Registration ?? "N/A";
 
-  // Load lavatories, lav subcats, issue types together
+  // Load lavatories and issue types together
   useEffect(() => {
+    if (!selectedAircraft) return;
     setLoadingLavs(true);
-    api.getLavatories(selectedAircraft?.AircraftId)
+    api.getLavatories(selectedAircraft.AircraftId)
       .then((data) => {
-        setLavatories(data);
-        if (data.length > 0) setActiveLav(data[0]);
+        // Deduplicate by LavatoriesCode in case DB has duplicate rows
+        const seen = new Set<string>();
+        const unique = data.filter((l) => {
+          if (seen.has(l.LavatoriesCode)) return false;
+          seen.add(l.LavatoriesCode);
+          return true;
+        });
+        setLavatories(unique);
+        if (unique.length > 0) setActiveLav(unique[0]);
       })
       .catch(() => setLavatories([]))
       .finally(() => setLoadingLavs(false));
-
-    api.getSubCategories("3")
-      .then(setLavSubCats)
-      .catch(() => {});
 
     setLoadingIssues(true);
     api.getIssueTypes()
@@ -104,25 +105,24 @@ export default function Lavatory() {
       .finally(() => setLoadingIssues(false));
   }, [selectedAircraft?.AircraftId]);
 
-  // Load parts when active lavatory changes
+  // Load parts when active lavatory or aircraft changes
   useEffect(() => {
     if (!activeLav || !selectedAircraft) return;
-    // Match lav code → SubCatID (e.g. "LAV A" → SubCatID 13)
-    const subCat = lavSubCats.find(
-      (sc) => sc.SubCatName.trim().toUpperCase() === activeLav.LavatoriesCode.trim().toUpperCase()
-    );
-    if (!subCat) return;
+    if (!activeLav.SubCatID) {
+      setItems([]);
+      return;
+    }
 
     setLoadingItems(true);
     setActiveItem(null);
-    api.getParts(subCat.SubCatID, selectedAircraft.AircraftId)
+    api.getParts(activeLav.SubCatID, selectedAircraft.AircraftId)
       .then((data) => {
         setItems(data);
         if (data.length > 0) setActiveItem(data[0].PartName);
       })
       .catch(() => setItems([]))
       .finally(() => setLoadingItems(false));
-  }, [activeLav?.LavatoriesId, lavSubCats]);
+  }, [activeLav?.LavatoriesId, selectedAircraft?.AircraftId]);
 
   // Reset workflow when lavatory changes
   useEffect(() => {

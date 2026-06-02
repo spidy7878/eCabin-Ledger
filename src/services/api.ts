@@ -7,7 +7,7 @@
  *   • Android emulator (AVD):      "http://10.0.2.2:4000/api"
  *   • Production (SmartASP.NET):   "http://macron-001-site3.ktempurl.com/api"
  */
-const API_BASE_URL = 'https://concentration-diet-narrow-supports.trycloudflare.com/api';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000/api';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +35,7 @@ export interface Galley {
   Status: string;
   LastInspectionDate: string | null;
   NextInspectionDate: string | null;
+  SubCatID: string | null;
 }
 
 export interface Lavatory {
@@ -48,6 +49,7 @@ export interface Lavatory {
   LastInspectionDate: string | null;
   NextInspectionDate: string | null;
   Notes: string | null;
+  SubCatID: string | null;
 }
 
 export interface AttendantSeat {
@@ -62,6 +64,7 @@ export interface AttendantSeat {
   NextInspectionDate: string | null;
   Notes: string | null;
   MSN: string | null;
+  SubCatID: string | null;
 }
 
 export interface SubCategory {
@@ -183,11 +186,18 @@ export const api = {
   getDashboard:       ()              => request<Dashboard>('/dashboard'),
 
   // ── Auth ──────────────────────────────────────────────────────────────────
-  login(username: string, password: string) {
-    return request<LoginResponse>('/auth/login', {
+  // Login uses its own fetch (not request()) so that a 401 wrong-credentials
+  // response throws an error containing "401" rather than "Session expired".
+  async login(username: string, password: string): Promise<LoginResponse> {
+    const res = await fetch(`${API_BASE_URL}/auth/login`, {
       method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ username, password }),
     });
+    if (!res.ok) {
+      throw new Error(String(res.status));
+    }
+    return res.json() as Promise<LoginResponse>;
   },
 
   // ── Image upload (multipart) ──────────────────────────────────────────────

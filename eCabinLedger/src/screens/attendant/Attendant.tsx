@@ -10,7 +10,7 @@ import Button from "../../components/Button";
 import WorkflowProgress from "../../components/WorkflowProgress";
 import { spacing } from "../../constants/spacing";
 import { colors } from "../../constants/colors";
-import { api, AttendantSeat as AttendantSeatType, SubCategory, Part, IssueType } from "../../services/api";
+import { api, AttendantSeat as AttendantSeatType, Part, IssueType } from "../../services/api";
 import { useAircraft } from "../../context/AircraftContext";
 import { useAuth } from "../../context/AuthContext";
 import { useWorkflow } from "../../context/WorkflowContext";
@@ -64,9 +64,6 @@ export default function Attendant() {
   const [loadingSeats, setLoadingSeats] = useState(false);
   const [activeAttendantSeat, setActiveAttendantSeat] = useState<AttendantSeatType | null>(null);
 
-  // ── subcategory map (CatID=4 → LH FWD / LH AFT / RH AFT) ──
-  const [attendantSubCats, setAttendantSubCats] = useState<SubCategory[]>([]);
-
   // ── items (parts for selected attendant seat) ──
   const [items, setItems] = useState<Part[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -86,20 +83,24 @@ export default function Attendant() {
 
   const registration = selectedAircraft?.Registration ?? "N/A";
 
-  // Load attendant seats, subcategories, and issue types together
+  // Load attendant seats and issue types together
   useEffect(() => {
+    if (!selectedAircraft) return;
     setLoadingSeats(true);
-    api.getAttendantSeats(selectedAircraft?.AircraftId)
+    api.getAttendantSeats(selectedAircraft.AircraftId)
       .then((data) => {
-        setAttendantSeats(data);
-        if (data.length > 0) setActiveAttendantSeat(data[0]);
+        // Deduplicate by AttendantSeatCode in case DB has duplicate rows
+        const seen = new Set<string>();
+        const unique = data.filter((s) => {
+          if (seen.has(s.AttendantSeatCode)) return false;
+          seen.add(s.AttendantSeatCode);
+          return true;
+        });
+        setAttendantSeats(unique);
+        if (unique.length > 0) setActiveAttendantSeat(unique[0]);
       })
       .catch(() => setAttendantSeats([]))
       .finally(() => setLoadingSeats(false));
-
-    api.getSubCategories("4")
-      .then(setAttendantSubCats)
-      .catch(() => {});
 
     setLoadingIssues(true);
     api.getIssueTypes()
@@ -108,25 +109,24 @@ export default function Attendant() {
       .finally(() => setLoadingIssues(false));
   }, [selectedAircraft?.AircraftId]);
 
-  // Load parts when active attendant seat changes
+  // Load parts when active attendant seat or aircraft changes
   useEffect(() => {
     if (!activeAttendantSeat || !selectedAircraft) return;
-    // Match seat code → SubCatID (e.g. "LH FWD" → SubCatID 16)
-    const subCat = attendantSubCats.find(
-      (sc) => sc.SubCatName.trim().toUpperCase() === activeAttendantSeat.AttendantSeatCode.trim().toUpperCase()
-    );
-    if (!subCat) return;
+    if (!activeAttendantSeat.SubCatID) {
+      setItems([]);
+      return;
+    }
 
     setLoadingItems(true);
     setActiveItem(null);
-    api.getParts(subCat.SubCatID, selectedAircraft.AircraftId)
+    api.getParts(activeAttendantSeat.SubCatID, selectedAircraft.AircraftId)
       .then((data) => {
         setItems(data);
         if (data.length > 0) setActiveItem(data[0].PartName);
       })
       .catch(() => setItems([]))
       .finally(() => setLoadingItems(false));
-  }, [activeAttendantSeat?.AttendantSeatId, attendantSubCats]);
+  }, [activeAttendantSeat?.AttendantSeatId, selectedAircraft?.AircraftId]);
 
   // Reset workflow when attendant seat changes
   useEffect(() => {
