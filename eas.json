@@ -14,13 +14,16 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://macron-001-site3.ktempurl.com/api"
+        "EXPO_PUBLIC_API_URL": "https://ecabin-server-production.up.railway.app/api"
       }
     },
     "production": {
       "autoIncrement": true,
+      "android": {
+        "buildType": "apk"
+      },
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://macron-001-site3.ktempurl.com/api"
+        "EXPO_PUBLIC_API_URL": "https://ecabin-server-production.up.railway.app/api"
       }
     }
   },

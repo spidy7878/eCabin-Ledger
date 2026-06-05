@@ -7,7 +7,7 @@
  *   • Android emulator (AVD):      "http://10.0.2.2:4000/api"
  *   • Production (SmartASP.NET):   "http://macron-001-site3.ktempurl.com/api"
  */
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000/api';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'https://ecabin-server-production.up.railway.app/api';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
