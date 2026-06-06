@@ -483,7 +483,6 @@ export default function Attendant() {
           title={submitting ? "Saving…" : "Submit"}
           onPress={handleSubmit}
           disabled={submitting}
-          icon={submitting ? undefined : <Text style={{ color: "white" }}>💾</Text>}
         />
       </View>
     </View>

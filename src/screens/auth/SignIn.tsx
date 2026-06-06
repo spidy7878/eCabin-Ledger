@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import {
   View,
   Text,
+  Image,
   TouchableOpacity,
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -68,18 +69,11 @@ export default function SignIn() {
       >
         {/* Logo */}
         <View style={{ alignItems: "center", marginTop: 48 }}>
-          <View
-            style={{
-              width: 84,
-              height: 84,
-              borderRadius: 18,
-              backgroundColor: colors.primary,
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Text style={{ fontSize: 36 }}>✈️</Text>
-          </View>
+          <Image
+            source={require("../../../assets/logo.png")}
+            style={{ width: 120, height: 120 }}
+            resizeMode="contain"
+          />
           <Text style={{ fontSize: 22, marginTop: 16, color: colors.text, fontWeight: "700" }}>
             eCabin Ledger
           </Text>
@@ -112,7 +106,7 @@ export default function SignIn() {
             label="Username or Email"
             value={username}
             onChangeText={(t) => { setUsername(t); setError(null); }}
-            placeholder="e.g. BIKRAMSI"
+            placeholder="Username"
             autoCapitalize="none"
             keyboardType="email-address"
           />

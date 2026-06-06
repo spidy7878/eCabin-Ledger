@@ -8,6 +8,10 @@
  * Data never leaves this queue until the server responds with HTTP 2xx.
  * Local image files are never deleted automatically — inspectors can clear
  * synced images manually to free storage.
+ *
+ * Schema history:
+ *   v1 → v2: added 'attendant' to zone_type CHECK  (drop+recreate, dev-only migration)
+ *   v2 → v3: added next_retry_at TEXT, part_id INTEGER  (safe ALTER TABLE)
  */
 
 import * as SQLite from "expo-sqlite";
@@ -19,32 +23,35 @@ export type ZoneType = "seats" | "galley" | "lavatory" | "attendant";
 export type SyncStatus = "pending" | "uploading" | "synced" | "failed";
 
 export interface InspectionImage {
-  id:            number;
-  inspector_id:  number;
-  inspector_name:string;
-  aircraft_id:   number;
-  aircraft_msn:  string;
-  zone_type:     ZoneType;
-  zone_id:       number;
-  zone_name:     string;
-  part_name:     string;
-  issue_id:      number | null;
-  issue_name:    string | null;
-  satisfaction:  number;   // 1 = satisfied, 0 = not satisfied
-  remarks:       string | null;
-  local_uri:     string;   // file:///... absolute path
-  file_name:     string;
-  file_size:     number | null;
-  sync_status:   SyncStatus;
-  retry_count:   number;
-  error_message: string | null;
-  created_at:    string;   // ISO 8601
-  synced_at:     string | null;
-  server_id:     number | null;
+  id:             number;
+  inspector_id:   number;
+  inspector_name: string;
+  aircraft_id:    number;
+  aircraft_msn:   string;
+  zone_type:      ZoneType;
+  zone_id:        number;
+  zone_name:      string;
+  part_id:        number | null;
+  part_name:      string;
+  issue_id:       number | null;
+  issue_name:     string | null;
+  satisfaction:   number;   // 1 = satisfied, 0 = not satisfied
+  remarks:        string | null;
+  local_uri:      string;   // file:///... absolute path
+  file_name:      string;
+  file_size:      number | null;
+  sync_status:    SyncStatus;
+  retry_count:    number;
+  next_retry_at:  string | null;  // ISO 8601 — null means "retry any time"
+  error_message:  string | null;
+  created_at:     string;   // ISO 8601
+  synced_at:      string | null;
+  server_id:      number | null;
 }
 
 export interface AddImageParams extends Omit<InspectionImage,
-  "id" | "sync_status" | "retry_count" | "error_message" | "created_at" | "synced_at" | "server_id"
+  "id" | "sync_status" | "retry_count" | "next_retry_at" | "error_message" |
+  "created_at" | "synced_at" | "server_id"
 > {}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -52,13 +59,17 @@ export interface AddImageParams extends Omit<InspectionImage,
 /** Images are stored here. This directory survives app updates. */
 export const IMAGE_DIR = `${FileSystem.documentDirectory}ecabin_inspections/`;
 
-const DB_NAME = "ecabin_queue.db";
+const DB_NAME    = "ecabin_queue.db";
 const MAX_RETRIES = 5;
+
+/** Backoff schedule: 1min, 2min, 4min, 8min, 16min (capped at 60min) */
+function backoffMs(retryCount: number): number {
+  return Math.min(Math.pow(2, retryCount), 60) * 60 * 1000;
+}
 
 // ── Database setup ────────────────────────────────────────────────────────────
 
-/** Current schema version — bump when the table structure changes. */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 
@@ -67,22 +78,21 @@ async function getDb(): Promise<SQLite.SQLiteDatabase> {
   _db = await SQLite.openDatabaseAsync(DB_NAME);
   await _db.execAsync(`PRAGMA journal_mode = WAL;`);
 
-  // ── Schema migration ───────────────────────────────────────────────────────
-  // v1 → v2: added 'attendant' to zone_type CHECK constraint.
-  // SQLite can't ALTER a CHECK constraint, so we drop + recreate the table.
-  // Any pending rows not yet synced are lost on first upgrade — acceptable for
-  // dev; production would copy rows before dropping.
-  const versionRow = await _db.getFirstAsync<{ user_version: number }>(
-    `PRAGMA user_version`
-  );
-  const currentVersion = versionRow?.user_version ?? 0;
+  const versionRow = await _db.getFirstAsync<{ user_version: number }>(`PRAGMA user_version`);
+  const current = versionRow?.user_version ?? 0;
 
-  if (currentVersion < SCHEMA_VERSION) {
-    // Drop old table so we can recreate with correct constraints
+  if (current < 2) {
+    // v0/v1 → v2: constraint change required drop+recreate  (dev-safe)
     await _db.execAsync(`DROP TABLE IF EXISTS inspection_images;`);
+  } else if (current === 2) {
+    // v2 → v3: add two nullable columns (ALTER TABLE is safe in SQLite)
+    await _db.execAsync(`ALTER TABLE inspection_images ADD COLUMN next_retry_at TEXT;`);
+    await _db.execAsync(`ALTER TABLE inspection_images ADD COLUMN part_id INTEGER;`);
+  }
+
+  if (current !== SCHEMA_VERSION) {
     await _db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION};`);
   }
-  // ──────────────────────────────────────────────────────────────────────────
 
   await _db.execAsync(`
     CREATE TABLE IF NOT EXISTS inspection_images (
@@ -94,6 +104,7 @@ async function getDb(): Promise<SQLite.SQLiteDatabase> {
       zone_type      TEXT    NOT NULL CHECK(zone_type IN ('seats','galley','lavatory','attendant')),
       zone_id        INTEGER NOT NULL,
       zone_name      TEXT    NOT NULL,
+      part_id        INTEGER,
       part_name      TEXT    NOT NULL,
       issue_id       INTEGER,
       issue_name     TEXT,
@@ -105,6 +116,7 @@ async function getDb(): Promise<SQLite.SQLiteDatabase> {
       sync_status    TEXT    NOT NULL DEFAULT 'pending'
                      CHECK(sync_status IN ('pending','uploading','synced','failed')),
       retry_count    INTEGER NOT NULL DEFAULT 0,
+      next_retry_at  TEXT,
       error_message  TEXT,
       created_at     TEXT    NOT NULL,
       synced_at      TEXT,
@@ -116,6 +128,8 @@ async function getDb(): Promise<SQLite.SQLiteDatabase> {
       ON inspection_images(inspector_id, aircraft_id);
     CREATE INDEX IF NOT EXISTS idx_zone
       ON inspection_images(zone_type, zone_id);
+    CREATE INDEX IF NOT EXISTS idx_retry
+      ON inspection_images(sync_status, next_retry_at);
   `);
   return _db;
 }
@@ -143,15 +157,13 @@ export async function enqueueImage(
 ): Promise<number> {
   await ensureImageDir();
 
-  // Build a stable filename: <inspectorId>_<aircraftId>_<zone>_<timestamp>.jpg
+  // Stable filename encodes inspector+aircraft+zone+timestamp for debug tracing
   const ts       = Date.now();
   const fileName = `${params.inspector_id}_${params.aircraft_id}_${params.zone_type}_${ts}.jpg`;
   const destUri  = `${IMAGE_DIR}${fileName}`;
 
-  // Copy from camera temp directory to persistent storage
   await FileSystem.copyAsync({ from: sourceUri, to: destUri });
 
-  // Get file size for integrity tracking
   const info = await FileSystem.getInfoAsync(destUri);
   const size = info.exists ? (info as any).size ?? null : null;
 
@@ -161,15 +173,16 @@ export async function enqueueImage(
   const result = await db.runAsync(
     `INSERT INTO inspection_images
      (inspector_id, inspector_name, aircraft_id, aircraft_msn,
-      zone_type, zone_id, zone_name, part_name,
+      zone_type, zone_id, zone_name, part_id, part_name,
       issue_id, issue_name, satisfaction, remarks,
       local_uri, file_name, file_size, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       params.inspector_id, params.inspector_name,
       params.aircraft_id,  params.aircraft_msn,
-      params.zone_type,    params.zone_id,   params.zone_name, params.part_name,
-      params.issue_id ?? null,  params.issue_name ?? null,
+      params.zone_type,    params.zone_id,   params.zone_name,
+      params.part_id ?? null, params.part_name,
+      params.issue_id ?? null, params.issue_name ?? null,
       params.satisfaction, params.remarks ?? null,
       destUri, fileName, size, now,
     ]
@@ -184,6 +197,22 @@ export async function getQueueByStatus(status: SyncStatus): Promise<InspectionIm
   return db.getAllAsync<InspectionImage>(
     `SELECT * FROM inspection_images WHERE sync_status = ? ORDER BY created_at ASC`,
     [status]
+  );
+}
+
+/**
+ * Returns 'pending' rows that are ready to sync right now.
+ * Rows with a future next_retry_at are excluded — they are in their backoff window.
+ */
+export async function getPendingForSync(): Promise<InspectionImage[]> {
+  const db  = await getDb();
+  const now = new Date().toISOString();
+  return db.getAllAsync<InspectionImage>(
+    `SELECT * FROM inspection_images
+     WHERE sync_status = 'pending'
+       AND (next_retry_at IS NULL OR next_retry_at <= ?)
+     ORDER BY created_at ASC`,
+    [now]
   );
 }
 
@@ -224,23 +253,37 @@ export async function markSynced(id: number, serverId: number | null): Promise<v
   const db = await getDb();
   await db.runAsync(
     `UPDATE inspection_images
-     SET sync_status='synced', server_id=?, synced_at=?, error_message=NULL
+     SET sync_status='synced', server_id=?, synced_at=?, error_message=NULL, next_retry_at=NULL
      WHERE id=?`,
     [serverId ?? null, new Date().toISOString(), id]
   );
 }
 
-/** Mark a row as failed and bump retry counter. */
+/**
+ * Mark a row as failed and schedule its next retry using exponential backoff.
+ * After MAX_RETRIES the row stays permanently 'failed' until manual reset.
+ */
 export async function markFailed(id: number, errorMsg: string): Promise<void> {
   const db = await getDb();
-  // If retries exceeded, keep as 'failed' permanently until manually retried.
+
+  const row = await db.getFirstAsync<{ retry_count: number }>(
+    `SELECT retry_count FROM inspection_images WHERE id = ?`, [id]
+  );
+  const newCount = (row?.retry_count ?? 0) + 1;
+  const isFinal  = newCount >= MAX_RETRIES;
+
+  const nextRetryAt = isFinal
+    ? null
+    : new Date(Date.now() + backoffMs(newCount)).toISOString();
+
   await db.runAsync(
     `UPDATE inspection_images
-     SET sync_status = CASE WHEN retry_count + 1 >= ${MAX_RETRIES} THEN 'failed' ELSE 'pending' END,
-         retry_count    = retry_count + 1,
-         error_message  = ?
-     WHERE id=?`,
-    [errorMsg, id]
+     SET sync_status   = ?,
+         retry_count   = ?,
+         error_message = ?,
+         next_retry_at = ?
+     WHERE id = ?`,
+    [isFinal ? "failed" : "pending", newCount, errorMsg, nextRetryAt, id]
   );
 }
 
@@ -248,7 +291,8 @@ export async function markFailed(id: number, errorMsg: string): Promise<void> {
 export async function retryFailed(): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    `UPDATE inspection_images SET sync_status='pending', retry_count=0, error_message=NULL
+    `UPDATE inspection_images
+     SET sync_status='pending', retry_count=0, error_message=NULL, next_retry_at=NULL
      WHERE sync_status='failed'`
   );
 }
@@ -286,4 +330,13 @@ export async function getQueueStats(inspectorId: number): Promise<{
   );
   const r = row ?? { pending: 0, uploading: 0, synced: 0, failed: 0 };
   return { ...r, total: r.pending + r.uploading + r.synced + r.failed };
+}
+
+/** Approximate local storage used by all cached images (bytes). */
+export async function getStorageUsedBytes(): Promise<number> {
+  const db  = await getDb();
+  const row = await db.getFirstAsync<{ total: number }>(
+    `SELECT COALESCE(SUM(file_size), 0) AS total FROM inspection_images`
+  );
+  return row?.total ?? 0;
 }

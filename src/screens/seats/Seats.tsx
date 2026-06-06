@@ -470,7 +470,6 @@ export default function Seats() {
           title={submitting ? "Saving\u2026" : "Submit"}
           onPress={handleSubmit}
           disabled={submitting}
-          icon={submitting ? undefined : <Text style={{ color: "white" }}>\uD83D\uDCBE</Text>}
         />
       </View>
     </View>

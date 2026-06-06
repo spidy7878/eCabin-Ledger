@@ -123,6 +123,27 @@ export interface AuthUser {
   employeeId: string;
 }
 
+export interface Inspector {
+  UserId: number;
+  Username: string;
+  FullName: string;
+  Email: string;
+  Role: string;
+  AssignedCount: number;
+}
+
+export interface Assignment {
+  AssignmentId: number;
+  UserId: number;
+  Username: string;
+  FullName: string;
+  AircraftId: number;
+  MSN: string;
+  Registration: string;
+  AircraftType: string;
+  AssignedDate: string;
+}
+
 export interface LoginResponse {
   token: string;
   user: AuthUser;
@@ -184,6 +205,15 @@ export const api = {
     request<Part[]>(`/parts?subCatId=${subCatId}&aircraftId=${aircraftId}`),
   getIssueTypes:      ()              => request<IssueType[]>('/issues'),
   getDashboard:       ()              => request<Dashboard>('/dashboard'),
+
+  // ── Admin / assignment APIs ───────────────────────────────────────────────
+  getInspectors:      ()              => request<Inspector[]>('/users/inspectors'),
+  getAssignments:     (userId: number) => request<Assignment[]>(`/assignments?userId=${userId}`),
+  saveAssignments:    (userId: number, aircraftIds: number[]) =>
+    request<{ message: string }>('/assignments', {
+      method: 'POST',
+      body: JSON.stringify({ userId, aircraftIds }),
+    }),
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   // Login uses its own fetch (not request()) so that a 401 wrong-credentials

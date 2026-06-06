@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, TouchableOpacity, Platform } from "react-native";
+import { View, Text, Image, TouchableOpacity, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "../constants/colors";
 
@@ -44,7 +44,11 @@ export default function CustomTopBar({ state, descriptors, navigation }: any) {
       >
 
         <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <Text style={{ fontSize: 24, marginRight: 8, color: colors.primary }}>✈️</Text>
+          <Image
+            source={require("../../assets/logo.png")}
+            style={{ width: 32, height: 32, marginRight: 8 }}
+            resizeMode="contain"
+          />
           <Text style={{ fontSize: 18, color: colors.primary, fontWeight: "700" }}>
             eCabin Ledger
           </Text>

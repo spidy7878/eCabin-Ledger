@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import Button from "../../components/Button";
 import WorkflowProgress from "../../components/WorkflowProgress";
+import OfflineBanner from "../../components/OfflineBanner";
 import { spacing } from "../../constants/spacing";
 import { colors } from "../../constants/colors";
 import { useAircraft } from "../../context/AircraftContext";
@@ -17,21 +18,16 @@ import { api, SubCategory, Part, IssueType } from "../../services/api";
 import { enqueueImage } from "../../db/imageQueue";
 import { startSync } from "../../services/syncService";
 
-// ─── Reusable sub-components ────────────────────────────────────────────────
+const MAX_PHOTOS = 10;
 
 const Pill = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
   <TouchableOpacity
     onPress={onPress}
     style={{
-      paddingVertical: 10,
-      paddingHorizontal: 16,
-      borderRadius: 8,
-      borderWidth: 1,
+      paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, borderWidth: 1,
       borderColor: active ? colors.primary : "#E5E7EB",
       backgroundColor: active ? colors.primary : "#F9FAFB",
-      marginRight: 8,
-      minWidth: 64,
-      alignItems: "center",
+      marginRight: 8, minWidth: 64, alignItems: "center",
     }}
   >
     <Text style={{ color: active ? "white" : "#4B5563", fontWeight: active ? "600" : "500", fontSize: 12 }}>
@@ -53,8 +49,6 @@ const LoadingRow = () => (
   </View>
 );
 
-// ─── Main screen ─────────────────────────────────────────────────────────────
-
 export default function Seats() {
   const insets = useSafeAreaInsets();
   const { selectedAircraft } = useAircraft();
@@ -62,21 +56,22 @@ export default function Seats() {
   const { isWorkflow, endWorkflow } = useWorkflow();
   const navigation = useNavigation();
 
-  const [zones, setZones] = useState<SubCategory[]>([]);
-  const [items, setItems] = useState<Part[]>([]);
+  const [zones, setZones]           = useState<SubCategory[]>([]);
+  const [items, setItems]           = useState<Part[]>([]);
   const [issueTypes, setIssueTypes] = useState<IssueType[]>([]);
 
-  const [loadingZones, setLoadingZones] = useState(false);
-  const [loadingItems, setLoadingItems] = useState(false);
+  const [loadingZones,  setLoadingZones]  = useState(false);
+  const [loadingItems,  setLoadingItems]  = useState(false);
   const [loadingIssues, setLoadingIssues] = useState(false);
 
-  const [activeZone, setActiveZone] = useState<SubCategory | null>(null);
-  const [activeItem, setActiveItem] = useState<string | null>(null);
-  const [satisfaction, setSatisfaction] = useState<"satisfied" | "not_satisfied" | null>(null);
-  const [selectedIssue, setSelectedIssue] = useState<IssueType | null>(null);
-  const [remarks, setRemarks] = useState("");
-  const [images, setImages] = useState<string[]>([]);
-  const [submitting, setSubmitting] = useState(false);
+  const [activeZone,     setActiveZone]     = useState<SubCategory | null>(null);
+  const [activeItem,     setActiveItem]     = useState<string | null>(null);
+  const [activePartId,   setActivePartId]   = useState<number | null>(null);
+  const [satisfaction,   setSatisfaction]   = useState<"satisfied" | "not_satisfied" | null>(null);
+  const [selectedIssue,  setSelectedIssue]  = useState<IssueType | null>(null);
+  const [remarks,        setRemarks]        = useState("");
+  const [images,         setImages]         = useState<string[]>([]);
+  const [submitting,     setSubmitting]     = useState(false);
   const [issueModalVisible, setIssueModalVisible] = useState(false);
 
   const registration = selectedAircraft?.Registration ?? "N/A";
@@ -89,13 +84,13 @@ export default function Seats() {
         setZones(data);
         if (data.length > 0) setActiveZone(data[0]);
       })
-      .catch((err) => console.error("zones error:", err))
+      .catch(() => {})
       .finally(() => setLoadingZones(false));
 
     setLoadingIssues(true);
     api.getIssueTypes()
       .then(setIssueTypes)
-      .catch((err) => console.error("issues error:", err))
+      .catch(() => {})
       .finally(() => setLoadingIssues(false));
   }, []);
 
@@ -104,16 +99,26 @@ export default function Seats() {
     if (!activeZone || !selectedAircraft) return;
     setLoadingItems(true);
     setActiveItem(null);
+    setActivePartId(null);
     api.getParts(activeZone.SubCatID, selectedAircraft.AircraftId)
       .then((data) => {
         setItems(data);
-        if (data.length > 0) setActiveItem(data[0].PartName);
+        if (data.length > 0) { setActiveItem(data[0].PartName); setActivePartId(data[0].PartID); }
       })
-      .catch((err) => console.error("parts error:", err))
+      .catch(() => {})
       .finally(() => setLoadingItems(false));
   }, [activeZone?.SubCatID, selectedAircraft?.AircraftId]);
 
+  // Clear issue when satisfaction changes to satisfied
+  useEffect(() => {
+    if (satisfaction === "satisfied") setSelectedIssue(null);
+  }, [satisfaction]);
+
   const handleTakePhoto = async () => {
+    if (images.length >= MAX_PHOTOS) {
+      Alert.alert("Photo limit", `Maximum ${MAX_PHOTOS} photos per submission.`);
+      return;
+    }
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== "granted") {
       Alert.alert("Permission required", "Camera access is needed to take inspection photos.");
@@ -121,7 +126,8 @@ export default function Seats() {
     }
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
+      quality: 0.6,
+      exif: false,
     });
     if (!result.canceled && result.assets.length > 0) {
       setImages((prev) => [...prev, result.assets[0].uri]);
@@ -129,11 +135,13 @@ export default function Seats() {
   };
 
   const handleSubmit = async () => {
-    if (!selectedAircraft) return Alert.alert("No aircraft", "Select an aircraft on the Home tab first.");
-    if (!activeZone)        return Alert.alert("Missing", "Select a seat zone.");
-    if (!activeItem)        return Alert.alert("Missing", "Select an item to inspect.");
+    if (!selectedAircraft)  return Alert.alert("No aircraft", "Select an aircraft on the Home tab first.");
+    if (!activeZone)         return Alert.alert("Missing", "Select a seat zone.");
+    if (!activeItem)         return Alert.alert("Missing", "Select an item to inspect.");
     if (images.length === 0) return Alert.alert("No photos", "Take at least one photo.");
-    if (!satisfaction)      return Alert.alert("Missing", "Mark Satisfied or Not Satisfied.");
+    if (!satisfaction)       return Alert.alert("Missing", "Mark Satisfied or Not Satisfied.");
+    if (satisfaction === "not_satisfied" && !selectedIssue)
+      return Alert.alert("Issue required", "Please select an issue type when marking Not Satisfied.");
 
     setSubmitting(true);
     try {
@@ -146,6 +154,7 @@ export default function Seats() {
           zone_type:      "seats",
           zone_id:        parseInt(activeZone.SubCatID, 10),
           zone_name:      activeZone.SubCatName,
+          part_id:        activePartId,
           part_name:      activeItem,
           issue_id:       selectedIssue?.IssueID ?? null,
           issue_name:     selectedIssue?.IssueName ?? null,
@@ -195,79 +204,33 @@ export default function Seats() {
         />
         <View
           style={{
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            backgroundColor: "white",
-            borderTopLeftRadius: 16,
-            borderTopRightRadius: 16,
-            maxHeight: "60%",
-            paddingBottom: insets.bottom || 16,
+            position: "absolute", bottom: 0, left: 0, right: 0,
+            backgroundColor: "white", borderTopLeftRadius: 16, borderTopRightRadius: 16,
+            maxHeight: "60%", paddingBottom: insets.bottom || 16,
           }}
         >
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: 16,
-              borderBottomWidth: 1,
-              borderBottomColor: "#E5E7EB",
-            }}
-          >
-            <Text style={{ fontSize: 14, fontWeight: "700", color: colors.primary }}>
-              SELECT ISSUE TYPE
-            </Text>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, borderBottomWidth: 1, borderBottomColor: "#E5E7EB" }}>
+            <Text style={{ fontSize: 14, fontWeight: "700", color: colors.primary }}>SELECT ISSUE TYPE</Text>
             <TouchableOpacity onPress={() => setIssueModalVisible(false)}>
               <Text style={{ fontSize: 18, color: "#6B7280" }}>✕</Text>
             </TouchableOpacity>
           </View>
           {loadingIssues ? (
-            <View style={{ padding: 24, alignItems: "center" }}>
-              <ActivityIndicator color={colors.primary} />
-            </View>
+            <View style={{ padding: 24, alignItems: "center" }}><ActivityIndicator color={colors.primary} /></View>
           ) : (
             <FlatList
               data={issueTypes}
               keyExtractor={(i) => String(i.IssueID)}
               renderItem={({ item }) => {
                 const isSelected = selectedIssue?.IssueID === item.IssueID;
-                const priorityColor =
-                  item.IssuePriority === "High"
-                    ? colors.danger
-                    : item.IssuePriority === "Moderate"
-                    ? "#F59E0B"
-                    : "#6B7280";
+                const priorityColor = item.IssuePriority === "High" ? colors.danger : item.IssuePriority === "Moderate" ? "#F59E0B" : "#6B7280";
                 return (
                   <TouchableOpacity
-                    onPress={() => {
-                      setSelectedIssue(item);
-                      setIssueModalVisible(false);
-                    }}
-                    style={{
-                      flexDirection: "row",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      paddingVertical: 14,
-                      paddingHorizontal: 16,
-                      borderBottomWidth: 1,
-                      borderBottomColor: "#F3F4F6",
-                      backgroundColor: isSelected ? "#EEF2FF" : "white",
-                    }}
+                    onPress={() => { setSelectedIssue(item); setIssueModalVisible(false); }}
+                    style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: "#F3F4F6", backgroundColor: isSelected ? "#EEF2FF" : "white" }}
                   >
-                    <Text
-                      style={{
-                        fontSize: 13,
-                        fontWeight: isSelected ? "700" : "500",
-                        color: isSelected ? colors.primary : "#374151",
-                      }}
-                    >
-                      {item.IssueName}
-                    </Text>
-                    <Text style={{ fontSize: 11, color: priorityColor, fontWeight: "600" }}>
-                      {item.IssuePriority?.toUpperCase()}
-                    </Text>
+                    <Text style={{ fontSize: 13, fontWeight: isSelected ? "700" : "500", color: isSelected ? colors.primary : "#374151" }}>{item.IssueName}</Text>
+                    <Text style={{ fontSize: 11, color: priorityColor, fontWeight: "600" }}>{item.IssuePriority?.toUpperCase()}</Text>
                   </TouchableOpacity>
                 );
               }}
@@ -283,40 +246,30 @@ export default function Seats() {
           paddingBottom: (insets.bottom || 0) + 100,
         }}
       >
-        {/* Workflow progress bar */}
         {isWorkflow && <WorkflowProgress step={0} onExit={endWorkflow} />}
+        <OfflineBanner />
+
         {/* ── 1. Seat Zone ── */}
         <SectionTitle title={`SELECT SEAT ZONE FOR ${registration}`} />
-        {loadingZones ? (
-          <LoadingRow />
-        ) : (
+        {loadingZones ? <LoadingRow /> : (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
             {zones.map((z) => (
-              <Pill
-                key={z.SubCatID}
-                label={z.SubCatName}
-                active={activeZone?.SubCatID === z.SubCatID}
-                onPress={() => setActiveZone(z)}
-              />
+              <Pill key={z.SubCatID} label={z.SubCatName} active={activeZone?.SubCatID === z.SubCatID} onPress={() => setActiveZone(z)} />
             ))}
-            {zones.length === 0 && (
-              <Text style={{ fontSize: 12, color: "#9CA3AF" }}>No zones found</Text>
-            )}
+            {zones.length === 0 && <Text style={{ fontSize: 12, color: "#9CA3AF" }}>No zones found</Text>}
           </ScrollView>
         )}
 
         {/* ── 2. Items ── */}
         <SectionTitle title={`SELECT ITEM FOR ${activeZone?.SubCatName ?? "—"}`} />
-        {loadingItems ? (
-          <LoadingRow />
-        ) : (
+        {loadingItems ? <LoadingRow /> : (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
             {items.map((it) => (
               <Pill
                 key={it.PartName}
                 label={it.PartName}
                 active={activeItem === it.PartName}
-                onPress={() => setActiveItem(it.PartName)}
+                onPress={() => { setActiveItem(it.PartName); setActivePartId(it.PartID); }}
               />
             ))}
             {items.length === 0 && activeZone && !loadingItems && (
@@ -329,23 +282,10 @@ export default function Seats() {
         <SectionTitle title="INSPECTION WORKFLOW" />
         <View style={{ borderWidth: 1, borderColor: "#D1D5DB", borderRadius: 12, padding: 16, backgroundColor: "white" }}>
 
-          {/* Active item header */}
           {activeItem ? (
-            <View
-              style={{
-                backgroundColor: colors.primary,
-                borderRadius: 8,
-                paddingVertical: 12,
-                paddingHorizontal: 16,
-                marginBottom: 20,
-                flexDirection: "row",
-                alignItems: "center",
-              }}
-            >
+            <View style={{ backgroundColor: colors.primary, borderRadius: 8, paddingVertical: 12, paddingHorizontal: 16, marginBottom: 20, flexDirection: "row", alignItems: "center" }}>
               <Text style={{ fontSize: 16, marginRight: 8 }}>📋</Text>
-              <Text style={{ fontSize: 13, fontWeight: "700", color: "white", flex: 1 }} numberOfLines={1}>
-                {activeItem}
-              </Text>
+              <Text style={{ fontSize: 13, fontWeight: "700", color: "white", flex: 1 }} numberOfLines={1}>{activeItem}</Text>
             </View>
           ) : (
             <View style={{ backgroundColor: "#F3F4F6", borderRadius: 8, paddingVertical: 12, paddingHorizontal: 16, marginBottom: 20 }}>
@@ -354,33 +294,30 @@ export default function Seats() {
           )}
 
           {/* Photos */}
-          <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary, marginBottom: 12 }}>
-            📸 TAKE MULTIPLE PICTURES{" "}
-            <Text style={{ color: "#6B7280", fontWeight: "400" }}>(Images required)</Text>
-          </Text>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary }}>
+              📸 TAKE PHOTOS <Text style={{ color: "#6B7280", fontWeight: "400" }}>(required)</Text>
+            </Text>
+            <Text style={{ fontSize: 11, color: images.length > 0 ? colors.primary : "#9CA3AF" }}>
+              {images.length}/{MAX_PHOTOS}
+            </Text>
+          </View>
           <View style={{ flexDirection: "row", marginBottom: 24, gap: 8, flexWrap: "wrap" }}>
-            <TouchableOpacity
-              onPress={handleTakePhoto}
-              style={{
-                width: 64, height: 64,
-                borderWidth: 1, borderStyle: "dashed", borderColor: "#9CA3AF",
-                borderRadius: 8, alignItems: "center", justifyContent: "center",
-                backgroundColor: "#F9FAFB",
-              }}
-            >
-              <Text style={{ fontSize: 20, color: "#9CA3AF" }}>+</Text>
-              <Text style={{ fontSize: 10, color: "#9CA3AF", marginTop: 2 }}>Photo</Text>
-            </TouchableOpacity>
+            {images.length < MAX_PHOTOS && (
+              <TouchableOpacity
+                onPress={handleTakePhoto}
+                style={{ width: 64, height: 64, borderWidth: 1, borderStyle: "dashed", borderColor: "#9CA3AF", borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#F9FAFB" }}
+              >
+                <Text style={{ fontSize: 20, color: "#9CA3AF" }}>+</Text>
+                <Text style={{ fontSize: 10, color: "#9CA3AF", marginTop: 2 }}>Photo</Text>
+              </TouchableOpacity>
+            )}
             {images.map((uri) => (
               <View key={uri} style={{ width: 64, height: 64, borderRadius: 8, overflow: "hidden" }}>
                 <Image source={{ uri }} style={{ width: 64, height: 64 }} resizeMode="cover" />
                 <TouchableOpacity
                   onPress={() => setImages(images.filter((u) => u !== uri))}
-                  style={{
-                    position: "absolute", right: -4, top: -4,
-                    backgroundColor: colors.primary, borderRadius: 10,
-                    width: 20, height: 20, alignItems: "center", justifyContent: "center", zIndex: 10,
-                  }}
+                  style={{ position: "absolute", right: -4, top: -4, backgroundColor: colors.primary, borderRadius: 10, width: 20, height: 20, alignItems: "center", justifyContent: "center", zIndex: 10 }}
                 >
                   <Text style={{ color: "white", fontSize: 10 }}>✕</Text>
                 </TouchableOpacity>
@@ -392,45 +329,27 @@ export default function Seats() {
           <View style={{ flexDirection: "row", marginBottom: 20, gap: 12 }}>
             <TouchableOpacity
               onPress={() => setSatisfaction("satisfied")}
-              style={{
-                flex: 1, paddingVertical: 12, borderRadius: 8, borderWidth: 1,
-                borderColor: satisfaction === "satisfied" ? "#22C55E" : colors.border,
-                backgroundColor: satisfaction === "satisfied" ? "#F0FDF4" : "white",
-                alignItems: "center", flexDirection: "row", justifyContent: "center",
-              }}
+              style={{ flex: 1, paddingVertical: 12, borderRadius: 8, borderWidth: 1, borderColor: satisfaction === "satisfied" ? "#22C55E" : colors.border, backgroundColor: satisfaction === "satisfied" ? "#F0FDF4" : "white", alignItems: "center", flexDirection: "row", justifyContent: "center" }}
             >
               <Text style={{ color: "#22C55E", marginRight: 6 }}>✅</Text>
-              <Text style={{ fontWeight: "600", color: satisfaction === "satisfied" ? "#22C55E" : colors.text, fontSize: 12 }}>
-                SATISFIED
-              </Text>
+              <Text style={{ fontWeight: "600", color: satisfaction === "satisfied" ? "#22C55E" : colors.text, fontSize: 12 }}>SATISFIED</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setSatisfaction("not_satisfied")}
-              style={{
-                flex: 1, paddingVertical: 12, borderRadius: 8, borderWidth: 1,
-                borderColor: satisfaction === "not_satisfied" ? colors.danger : colors.border,
-                backgroundColor: satisfaction === "not_satisfied" ? "#FEF2F2" : "white",
-                alignItems: "center", flexDirection: "row", justifyContent: "center",
-              }}
+              style={{ flex: 1, paddingVertical: 12, borderRadius: 8, borderWidth: 1, borderColor: satisfaction === "not_satisfied" ? colors.danger : colors.border, backgroundColor: satisfaction === "not_satisfied" ? "#FEF2F2" : "white", alignItems: "center", flexDirection: "row", justifyContent: "center" }}
             >
               <Text style={{ color: colors.danger, marginRight: 6 }}>❗</Text>
               <Text style={{ fontWeight: "600", color: colors.danger, fontSize: 12 }}>NOT SATISFIED</Text>
             </TouchableOpacity>
           </View>
 
-          {/* ── 4. Issue Type Dropdown ── */}
-          <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary, marginBottom: 8 }}>
-            ⚠️ SELECT ISSUE TYPE
+          {/* Issue Type — required when not satisfied */}
+          <Text style={{ fontSize: 12, fontWeight: "700", color: satisfaction === "not_satisfied" ? colors.danger : colors.primary, marginBottom: 8 }}>
+            ⚠️ ISSUE TYPE{satisfaction === "not_satisfied" ? " *" : ""}
           </Text>
           <TouchableOpacity
             onPress={() => setIssueModalVisible(true)}
-            style={{
-              borderWidth: 1,
-              borderColor: selectedIssue ? colors.primary : colors.border,
-              borderRadius: 8, padding: 12, marginBottom: 20,
-              flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-              backgroundColor: selectedIssue ? "#EEF2FF" : "white",
-            }}
+            style={{ borderWidth: 1, borderColor: selectedIssue ? colors.primary : satisfaction === "not_satisfied" ? colors.danger : colors.border, borderRadius: 8, padding: 12, marginBottom: 20, flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: selectedIssue ? "#EEF2FF" : "white" }}
           >
             <Text style={{ color: selectedIssue ? colors.primary : "#6B7280", fontWeight: selectedIssue ? "600" : "400", fontSize: 13 }}>
               {selectedIssue ? selectedIssue.IssueName : "Select an issue…"}
@@ -439,15 +358,9 @@ export default function Seats() {
           </TouchableOpacity>
 
           {/* Remarks */}
-          <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary, marginBottom: 8 }}>
-            📝 REMARKS
-          </Text>
+          <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary, marginBottom: 8 }}>📝 REMARKS</Text>
           <TextInput
-            style={{
-              borderWidth: 1, borderColor: colors.border, borderRadius: 8,
-              padding: 12, height: 80, textAlignVertical: "top",
-              fontSize: 13, color: colors.text,
-            }}
+            style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, height: 80, textAlignVertical: "top", fontSize: 13, color: colors.text }}
             placeholder="Describe the issue or add verification notes…"
             placeholderTextColor="#9CA3AF"
             multiline
@@ -457,20 +370,13 @@ export default function Seats() {
         </View>
       </ScrollView>
 
-      {/* Sticky Bottom */}
-      <View
-        style={{
-          position: "absolute", bottom: 0, left: 0, right: 0,
-          paddingHorizontal: 16, paddingTop: 16,
-          paddingBottom: (insets.bottom || 16) + 12,
-          backgroundColor: "white", borderTopWidth: 1, borderTopColor: "#E5E7EB", zIndex: 10,
-        }}
-      >
+      {/* Sticky Submit */}
+      <View style={{ position: "absolute", bottom: 0, left: 0, right: 0, paddingHorizontal: 16, paddingTop: 16, paddingBottom: (insets.bottom || 16) + 12, backgroundColor: "white", borderTopWidth: 1, borderTopColor: "#E5E7EB", zIndex: 10 }}>
         <Button
-          title={submitting ? "Saving\u2026" : "Submit"}
+          title={submitting ? "Saving…" : "Submit"}
           onPress={handleSubmit}
           disabled={submitting}
-          icon={submitting ? undefined : <Text style={{ color: "white" }}>\uD83D\uDCBE</Text>}
+          icon={submitting ? undefined : <Text style={{ color: "white" }}>💾</Text>}
         />
       </View>
     </View>

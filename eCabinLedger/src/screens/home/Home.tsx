@@ -16,7 +16,7 @@ import { api, Aircraft, Dashboard, AuditTask } from "../../services/api";
 import { useAircraft } from "../../context/AircraftContext";
 import { useAuth } from "../../context/AuthContext";
 import { useWorkflow } from "../../context/WorkflowContext";
-import { getQueueStats } from "../../db/imageQueue";
+import { getQueueStats, retryFailed } from "../../db/imageQueue";
 import { startSync } from "../../services/syncService";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -293,6 +293,8 @@ export default function Home() {
   const handleSync = async () => {
     if (syncing) return;
     setSyncing(true);
+    // Reset any permanently-failed rows back to pending before syncing
+    await retryFailed().catch(() => {});
     await startSync().catch(() => {});
     if (user) getQueueStats(user.userId).then(setQueueStats).catch(() => {});
     setSyncing(false);

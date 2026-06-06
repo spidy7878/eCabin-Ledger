@@ -6,9 +6,8 @@ import { colors } from "../../constants/colors";
 import { Ionicons, MaterialIcons, Feather } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
-import { getQueueStats } from "../../db/imageQueue";
+import { getQueueStats, clearSynced, retryFailed, getStorageUsedBytes } from "../../db/imageQueue";
 import { startSync } from "../../services/syncService";
-import { clearSynced } from "../../db/imageQueue";
 
 type QueueStats = { pending: number; uploading: number; synced: number; failed: number; total: number };
 
@@ -17,16 +16,36 @@ export default function Profile() {
   const navigation = useNavigation();
   const { user, logout } = useAuth();
 
-  const [queueStats, setQueueStats] = useState<QueueStats>({ pending: 0, uploading: 0, synced: 0, failed: 0, total: 0 });
-  const [syncing, setSyncing]       = useState(false);
-  const [clearing, setClearing]     = useState(false);
+  const [queueStats,   setQueueStats]   = useState<QueueStats>({ pending: 0, uploading: 0, synced: 0, failed: 0, total: 0 });
+  const [storageBytes, setStorageBytes] = useState(0);
+  const [syncing,      setSyncing]      = useState(false);
+  const [clearing,     setClearing]     = useState(false);
+  const [retrying,     setRetrying]     = useState(false);
 
   useEffect(() => {
     if (user) refreshStats();
   }, [user]);
 
   const refreshStats = () => {
-    if (user) getQueueStats(user.userId).then(setQueueStats).catch(() => {});
+    if (user) {
+      getQueueStats(user.userId).then(setQueueStats).catch(() => {});
+      getStorageUsedBytes().then(setStorageBytes).catch(() => {});
+    }
+  };
+
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  const handleRetryFailed = async () => {
+    if (retrying) return;
+    setRetrying(true);
+    await retryFailed().catch(() => {});
+    await startSync().catch(() => {});
+    refreshStats();
+    setRetrying(false);
   };
 
   const handleSync = async () => {
@@ -135,6 +154,16 @@ export default function Profile() {
             ))}
           </View>
 
+          {/* Storage used */}
+          {storageBytes > 0 && (
+            <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 12, paddingHorizontal: 4 }}>
+              <Feather name="hard-drive" size={14} color="#6B7280" style={{ marginRight: 6 }} />
+              <Text style={{ fontSize: 12, color: "#6B7280" }}>
+                Local storage used: <Text style={{ fontWeight: "600", color: colors.text }}>{formatBytes(storageBytes)}</Text>
+              </Text>
+            </View>
+          )}
+
           {/* Sync now button */}
           <TouchableOpacity
             onPress={handleSync}
@@ -153,6 +182,20 @@ export default function Profile() {
               {syncing ? "Syncing…" : "Sync Now"}
             </Text>
           </TouchableOpacity>
+
+          {/* Retry failed button */}
+          {queueStats.failed > 0 && (
+            <TouchableOpacity
+              onPress={handleRetryFailed}
+              disabled={retrying}
+              style={[styles.actionButton, { backgroundColor: "#FEF2F2", borderWidth: 1, borderColor: "#FECACA", marginTop: 8 }]}
+            >
+              <Feather name="refresh-cw" size={16} color={colors.danger} style={{ marginRight: 8 }} />
+              <Text style={{ color: colors.danger, fontWeight: "600", fontSize: 14 }}>
+                {retrying ? "Retrying…" : `Retry ${queueStats.failed} failed upload${queueStats.failed > 1 ? "s" : ""}`}
+              </Text>
+            </TouchableOpacity>
+          )}
 
           {/* Clear synced button */}
           {queueStats.synced > 0 && (

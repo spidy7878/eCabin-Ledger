@@ -4,6 +4,7 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { NavigationContainer } from "@react-navigation/native";
 import { View, ActivityIndicator } from "react-native";
+import { useNetworkState } from "expo-network";
 import CustomTopBar from "./CustomTopBar";
 import SignIn from "../screens/auth/SignIn";
 import Galley from "../screens/galley/Galley";
@@ -27,21 +28,21 @@ function MainTabs() {
       tabBar={(props) => <CustomTopBar {...props} />}
       screenOptions={{ headerShown: false }}
     >
-      <Tab.Screen name="Home"     component={Home}     />
-      <Tab.Screen name="Seats"    component={Seats}    />
-      <Tab.Screen name="Galley"   component={Galley}   />
-      <Tab.Screen name="Lavatory" component={Lavatory} />
+      <Tab.Screen name="Home"      component={Home}      />
+      <Tab.Screen name="Seats"     component={Seats}     />
+      <Tab.Screen name="Galley"    component={Galley}    />
+      <Tab.Screen name="Lavatory"  component={Lavatory}  />
       <Tab.Screen name="Attendant" component={Attendant} />
     </Tab.Navigator>
   );
 }
 
-/** Inner navigator — rendered after AuthProvider is mounted. */
 function RootNavigator() {
   const { user, loading } = useAuth();
-  const appState = useRef(AppState.currentState);
+  const appState     = useRef(AppState.currentState);
+  const wasConnected = useRef<boolean | null>(null);
 
-  // Trigger sync every time the app comes to foreground
+  // Sync on foreground resume
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active" && appState.current !== "active" && user) {
@@ -51,6 +52,16 @@ function RootNavigator() {
     });
     return () => sub.remove();
   }, [user]);
+
+  // Sync when network reconnects (offline → online transition)
+  const net = useNetworkState();
+  useEffect(() => {
+    const isNow = net.isConnected === true && net.isInternetReachable !== false;
+    if (isNow && wasConnected.current === false && user) {
+      startSync().catch(() => {});
+    }
+    wasConnected.current = isNow;
+  }, [net.isConnected, net.isInternetReachable, user]);
 
   if (loading) {
     return (
