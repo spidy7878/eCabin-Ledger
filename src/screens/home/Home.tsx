@@ -12,12 +12,13 @@ import { useNavigation } from "@react-navigation/native";
 import Card from "../../components/Card";
 import { spacing } from "../../constants/spacing";
 import { colors } from "../../constants/colors";
-import { api, Aircraft, Dashboard, AuditTask } from "../../services/api";
+import { api, Dashboard, AuditTask } from "../../services/api";
 import { useAircraft } from "../../context/AircraftContext";
 import { useAuth } from "../../context/AuthContext";
 import { useWorkflow } from "../../context/WorkflowContext";
 import { getQueueStats } from "../../db/imageQueue";
 import { startSync } from "../../services/syncService";
+import { useInspectionProgress } from "../../hooks/useInspectionProgress";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -250,12 +251,15 @@ const TaskCard = ({
 
 export default function Home() {
   const insets = useSafeAreaInsets();
-  const { selectedAircraft, setSelectedAircraft } = useAircraft();
+  // Aircraft list + selection are owned by AircraftContext so every zone screen
+  // (Galley/Lavatory/Attendant) has a selected aircraft to fetch against — even
+  // if the dashboard request below fails.
+  const { aircraftList, selectedAircraft, setSelectedAircraft } = useAircraft();
   const { user, logout } = useAuth();
   const { startWorkflow } = useWorkflow();
   const navigation = useNavigation();
+  const { progress, overall } = useInspectionProgress(selectedAircraft?.AircraftId);
 
-  const [aircraftList, setAircraftList] = useState<Aircraft[]>([]);
   const [dashboard, setDashboard]       = useState<Dashboard | null>(null);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState<string | null>(null);
@@ -263,22 +267,8 @@ export default function Home() {
   const [syncing, setSyncing]           = useState(false);
 
   useEffect(() => {
-    Promise.all([api.getAircraft(), api.getDashboard()])
-      .then(([aircraft, dash]) => {
-        setDashboard(dash);
-
-        // The /aircraft endpoint already scopes the list to what the signed-in
-        // user may inspect (Admin/Manager → whole fleet; inspector → their
-        // operator's aircraft).  Use it directly as the selectable list — do
-        // NOT intersect it with dash.tasks, or an inspector with no matching
-        // audit rows would be left with no selectable aircraft, which silently
-        // broke the Galley/Lavatory/Attendant item & parts pickers.
-        setAircraftList(aircraft);
-
-        if (aircraft.length > 0 && !selectedAircraft) {
-          setSelectedAircraft(aircraft[0]);
-        }
-      })
+    api.getDashboard()
+      .then(setDashboard)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
@@ -333,10 +323,9 @@ export default function Home() {
           </TouchableOpacity>
         </View>
 
-        {/* Sync status bar */}
+        {/* Sync status bar — informational only; sync happens automatically */}
         {queueStats.total > 0 && (
-          <TouchableOpacity
-            onPress={handleSync}
+          <View
             style={{
               flexDirection: "row",
               alignItems: "center",
@@ -349,26 +338,25 @@ export default function Home() {
             }}
           >
             <Text style={{ fontSize: 16, marginRight: 8 }}>
-              {syncing ? "⏳" : queueStats.pending > 0 ? "🔴" : "✅"}
+              {syncing ? "⏳" : queueStats.pending > 0 ? "🔄" : "✅"}
             </Text>
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 12, fontWeight: "600", color: colors.text }}>
                 {syncing
                   ? "Syncing images…"
                   : queueStats.pending > 0
-                  ? `${queueStats.pending} image${queueStats.pending > 1 ? "s" : ""} pending upload`
-                  : `All ${queueStats.synced} images synced`}
+                  ? `${queueStats.pending} image${queueStats.pending > 1 ? "s" : ""} uploading automatically…`
+                  : `All ${queueStats.synced} images synced ✓`}
               </Text>
               {queueStats.failed > 0 && (
-                <Text style={{ fontSize: 11, color: colors.danger }}>
-                  {queueStats.failed} failed — tap to retry
-                </Text>
+                <TouchableOpacity onPress={handleSync}>
+                  <Text style={{ fontSize: 11, color: colors.danger, marginTop: 2 }}>
+                    {queueStats.failed} failed — tap here to retry
+                  </Text>
+                </TouchableOpacity>
               )}
             </View>
-            {!syncing && queueStats.pending > 0 && (
-              <Text style={{ fontSize: 11, color: colors.primary, fontWeight: "600" }}>Sync now ›</Text>
-            )}
-          </TouchableOpacity>
+          </View>
         )}
 
         {loading ? (
@@ -403,9 +391,57 @@ export default function Home() {
               ))}
             </ScrollView>
             {selectedAircraft && (
-              <Text style={{ fontSize: 11, color: "#6B7280", marginBottom: 24 }}>
+              <Text style={{ fontSize: 11, color: "#6B7280", marginBottom: 12 }}>
                 {selectedAircraft.Registration} · {selectedAircraft.AircraftType}
               </Text>
+            )}
+
+            {/* ── Inspection Progress ─────────────────────── */}
+            {overall.total > 0 && (
+              <View style={{ backgroundColor: "white", borderRadius: 12, padding: 14, marginBottom: 24, borderWidth: 1, borderColor: "#E5E7EB" }}>
+                <Text style={styles.sectionLabel}>INSPECTION PROGRESS</Text>
+                {/* Overall bar */}
+                <View style={{ marginBottom: 10 }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+                    <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary }}>Overall</Text>
+                    <Text style={{ fontSize: 12, fontWeight: "700", color: overall.done >= overall.total ? "#22C55E" : colors.primary }}>
+                      {overall.done}/{overall.total}{overall.done >= overall.total ? " ✓" : ""}
+                    </Text>
+                  </View>
+                  <View style={{ height: 7, borderRadius: 4, backgroundColor: "#E5E7EB" }}>
+                    <View style={{
+                      height: 7, borderRadius: 4,
+                      backgroundColor: overall.done >= overall.total ? "#22C55E" : colors.primary,
+                      width: `${Math.min((overall.done / overall.total) * 100, 100).toFixed(0)}%` as any,
+                    }} />
+                  </View>
+                </View>
+                {/* Per-zone rows */}
+                {(["seats", "galley", "lavatory", "attendant"] as const).map((zone) => {
+                  const { done, total } = progress[zone];
+                  if (total === 0) return null;
+                  const pct   = Math.min(done / total, 1);
+                  const done_ = done >= total;
+                  const label = zone.charAt(0).toUpperCase() + zone.slice(1);
+                  return (
+                    <View key={zone} style={{ marginBottom: 6 }}>
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
+                        <Text style={{ fontSize: 11, color: "#6B7280" }}>{label}</Text>
+                        <Text style={{ fontSize: 11, fontWeight: "600", color: done_ ? "#22C55E" : "#374151" }}>
+                          {done}/{total}{done_ ? " ✓" : ""}
+                        </Text>
+                      </View>
+                      <View style={{ height: 4, borderRadius: 2, backgroundColor: "#E5E7EB" }}>
+                        <View style={{
+                          height: 4, borderRadius: 2,
+                          backgroundColor: done_ ? "#22C55E" : colors.primary,
+                          width: `${(pct * 100).toFixed(0)}%` as any,
+                        }} />
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
             )}
 
             {/* ── Inspection schedule ─────────────────────── */}

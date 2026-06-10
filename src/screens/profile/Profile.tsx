@@ -8,7 +8,6 @@ import { useNavigation } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
 import { getQueueStats } from "../../db/imageQueue";
 import { startSync } from "../../services/syncService";
-import { clearSynced } from "../../db/imageQueue";
 
 type QueueStats = { pending: number; uploading: number; synced: number; failed: number; total: number };
 
@@ -19,7 +18,6 @@ export default function Profile() {
 
   const [queueStats, setQueueStats] = useState<QueueStats>({ pending: 0, uploading: 0, synced: 0, failed: 0, total: 0 });
   const [syncing, setSyncing]       = useState(false);
-  const [clearing, setClearing]     = useState(false);
 
   useEffect(() => {
     if (user) refreshStats();
@@ -35,14 +33,6 @@ export default function Profile() {
     await startSync().catch(() => {});
     refreshStats();
     setSyncing(false);
-  };
-
-  const handleClearSynced = async () => {
-    if (clearing) return;
-    setClearing(true);
-    await clearSynced().catch(() => {});
-    refreshStats();
-    setClearing(false);
   };
 
   const initials = user
@@ -154,19 +144,6 @@ export default function Profile() {
             </Text>
           </TouchableOpacity>
 
-          {/* Clear synced button */}
-          {queueStats.synced > 0 && (
-            <TouchableOpacity
-              onPress={handleClearSynced}
-              disabled={clearing}
-              style={[styles.actionButton, { backgroundColor: "#F0FDF4", borderWidth: 1, borderColor: "#BBF7D0", marginTop: 8 }]}
-            >
-              <Feather name="trash-2" size={16} color={colors.success} style={{ marginRight: 8 }} />
-              <Text style={{ color: colors.success, fontWeight: "600", fontSize: 14 }}>
-                {clearing ? "Clearing…" : `Clear ${queueStats.synced} synced image${queueStats.synced > 1 ? "s" : ""}`}
-              </Text>
-            </TouchableOpacity>
-          )}
         </View>
 
         {/* Logout */}

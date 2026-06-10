@@ -15,9 +15,11 @@
  */
 
 import * as Network from "expo-network";
+import * as FileSystem from "expo-file-system/legacy";
 import { api }       from "./api";
 import {
-  getQueueByStatus,
+  getUploadable,
+  recoverStuckUploads,
   markUploading,
   markSynced,
   markFailed,
@@ -49,28 +51,37 @@ export async function startSync(): Promise<SyncResult> {
       return result;
     }
 
-    // Also process rows that were stuck in 'uploading' state
-    // (e.g., app crashed mid-upload — reset them to pending first)
-    const stuckUploading = await getQueueByStatus("uploading");
-    for (const row of stuckUploading) {
-      await markFailed(row.id, "Upload interrupted — will retry");
-    }
+    // Crash recovery: requeue anything left in 'uploading' from a previous run.
+    await recoverStuckUploads();
 
-    let page = await getQueueByStatus("pending");
+    // Drain due rows in batches.  getUploadable only returns rows whose backoff
+    // window has elapsed, so a persistent error can't spin in a tight loop — the
+    // loop ends once nothing is due, and the periodic/network triggers retry the
+    // backed-off rows later.
+    while (true) {
+      const net2 = await Network.getNetworkStateAsync();
+      if (!net2.isConnected || !net2.isInternetReachable) break;
 
-    while (page.length > 0) {
-      const batch = page.slice(0, BATCH_SIZE);
+      const batch = await getUploadable(BATCH_SIZE);
+      if (batch.length === 0) break;
 
-      // Mark as uploading atomically before attempting
+      // Claim the batch so a concurrent trigger can't pick the same rows.
       await Promise.all(batch.map((r) => markUploading(r.id)));
 
-      // Upload in parallel within the batch
       await Promise.allSettled(
         batch.map(async (row) => {
           try {
+            // Never report a missing file as uploaded — surface it as failed.
+            const info = await FileSystem.getInfoAsync(row.local_uri);
+            if (!info.exists) {
+              await markFailed(row.id, "Local image file missing");
+              result.failed++;
+              return;
+            }
+
             const res = await api.uploadImage({
               localUri:    row.local_uri,
-              clientId:    String(row.id),
+              clientId:    row.client_uuid ?? String(row.id), // idempotency key
               aircraftId:  row.aircraft_id,
               aircraftMsn: row.aircraft_msn,
               zoneType:    row.zone_type,
@@ -90,14 +101,6 @@ export async function startSync(): Promise<SyncResult> {
           }
         })
       );
-
-      // Re-check network before next batch
-      const net2 = await Network.getNetworkStateAsync();
-      if (!net2.isConnected) break;
-
-      // Get next page
-      const remaining = await getQueueByStatus("pending");
-      page = remaining;
     }
   } finally {
     _syncing = false;

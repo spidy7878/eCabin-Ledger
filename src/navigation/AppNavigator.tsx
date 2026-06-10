@@ -4,6 +4,7 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { NavigationContainer } from "@react-navigation/native";
 import { View, ActivityIndicator } from "react-native";
+import { useNetworkState } from "expo-network";
 import CustomTopBar from "./CustomTopBar";
 import SignIn from "../screens/auth/SignIn";
 import Galley from "../screens/galley/Galley";
@@ -12,7 +13,6 @@ import Seats from "../screens/seats/Seats";
 import Lavatory from "../screens/lavatory/Lavatory";
 import Attendant from "../screens/attendant/Attendant";
 import Profile from "../screens/profile/Profile";
-import AdminHome from "../screens/admin/AdminHome";
 import { AircraftProvider } from "../context/AircraftContext";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import { WorkflowProvider } from "../context/WorkflowContext";
@@ -40,13 +40,16 @@ function InspectorTabs() {
 /** Inner navigator — rendered after AuthProvider is mounted. */
 function RootNavigator() {
   const { user, loading } = useAuth();
-  const appState = useRef(AppState.currentState);
+  const appState     = useRef(AppState.currentState);
+  const wasConnected = useRef<boolean | null>(null);
 
-  const isAdmin = user?.role === "Admin" || user?.role === "Manager";
-
-  // Inspector-only: sync on foreground
+  // Sync immediately when the user session becomes available (login or app restart).
   useEffect(() => {
-    if (isAdmin) return;
+    if (user) startSync().catch(() => {});
+  }, [user]);
+
+  // Sync on foreground resume.
+  useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active" && appState.current !== "active" && user) {
         startSync().catch(() => {});
@@ -54,7 +57,26 @@ function RootNavigator() {
       appState.current = state;
     });
     return () => sub.remove();
-  }, [user, isAdmin]);
+  }, [user]);
+
+  // Sync when network reconnects (offline → online transition).
+  const net = useNetworkState();
+  useEffect(() => {
+    const isNow = net.isConnected === true && net.isInternetReachable !== false;
+    if (isNow && wasConnected.current === false && user) {
+      startSync().catch(() => {});
+    }
+    wasConnected.current = isNow;
+  }, [net.isConnected, net.isInternetReachable, user]);
+
+  // Periodic safety-net: while signed in, retry the queue every 90s so
+  // backoff-delayed images upload on their own even without a foreground or
+  // network-state change.  startSync() no-ops when offline or already running.
+  useEffect(() => {
+    if (!user) return;
+    const id = setInterval(() => { startSync().catch(() => {}); }, 90_000);
+    return () => clearInterval(id);
+  }, [user]);
 
   if (loading) {
     return (
@@ -66,17 +88,6 @@ function RootNavigator() {
 
   if (!user) {
     return <NavigationContainer><SignIn /></NavigationContainer>;
-  }
-
-  // Admin / Manager → assignment dashboard only
-  if (isAdmin) {
-    return (
-      <NavigationContainer>
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="AdminHome" component={AdminHome} />
-        </Stack.Navigator>
-      </NavigationContainer>
-    );
   }
 
   // Inspector → full inspection tabs

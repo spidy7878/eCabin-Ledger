@@ -41,6 +41,8 @@ export default function SignIn() {
       setError(
         msg.includes("401")
           ? "Invalid username or password. Please try again."
+          : msg.includes("403")
+          ? "This app is for inspectors only. Please use the web portal."
           : msg.includes("Session expired")
           ? "Session expired. Please sign in again."
           : msg.match(/^(Failed to fetch|Network request failed|TypeError)/)
@@ -55,7 +57,7 @@ export default function SignIn() {
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <ScrollView
         contentContainerStyle={{

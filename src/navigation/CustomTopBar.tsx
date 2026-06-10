@@ -1,10 +1,10 @@
 import React from "react";
-import { View, Text, Image, TouchableOpacity, Platform } from "react-native";
+import { View, Text, Image, TouchableOpacity, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "../constants/colors";
+import { useWorkflow } from "../context/WorkflowContext";
 
-// Map of route names to icons
-const TAB_ICONS: any = {
+const TAB_ICONS: Record<string, string> = {
   Home: "🏠",
   Seats: "💺",
   Galley: "🍴",
@@ -12,8 +12,11 @@ const TAB_ICONS: any = {
   Attendant: "🧑‍✈️",
 };
 
+const INSPECTION_TABS = ["Seats", "Galley", "Lavatory", "Attendant"];
+
 export default function CustomTopBar({ state, descriptors, navigation }: any) {
   const insets = useSafeAreaInsets();
+  const { isWorkflow } = useWorkflow();
 
   return (
     <View style={{ 
@@ -90,14 +93,22 @@ export default function CustomTopBar({ state, descriptors, navigation }: any) {
               : route.name;
 
           const isFocused = state.index === index;
+          const isLocked = INSPECTION_TABS.includes(route.name) && !isWorkflow;
 
           const onPress = () => {
+            if (isLocked) {
+              Alert.alert(
+                "No Active Inspection",
+                "Select an aircraft on the Home screen and tap 'Start Inspection' to begin.",
+                [{ text: "OK" }]
+              );
+              return;
+            }
             const event = navigation.emit({
               type: "tabPress",
               target: route.key,
               canPreventDefault: true,
             });
-
             if (!isFocused && !event.defaultPrevented) {
               navigation.navigate({ name: route.name, merge: true });
             }
@@ -114,6 +125,7 @@ export default function CustomTopBar({ state, descriptors, navigation }: any) {
                 paddingHorizontal: 12,
                 borderRadius: 8,
                 backgroundColor: isFocused ? colors.primary : "transparent",
+                opacity: isLocked ? 0.35 : 1,
               }}
             >
               <Text style={{ fontSize: 20, marginBottom: 2 }}>

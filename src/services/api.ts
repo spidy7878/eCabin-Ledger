@@ -9,6 +9,9 @@
  */
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'https://ecabin-server-production.up.railway.app/api';
 
+/** Max time for a single image upload before it's aborted and re-queued. */
+const UPLOAD_TIMEOUT_MS = 60_000;
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface Aircraft {
@@ -114,6 +117,13 @@ export interface Dashboard {
   role: string;
 }
 
+export interface InspectionTotals {
+  seats: number;
+  galley: number;
+  lavatory: number;
+  attendant: number;
+}
+
 export interface AuthUser {
   userId: number;
   username: string;
@@ -121,27 +131,6 @@ export interface AuthUser {
   role: string;
   email: string;
   employeeId: string;
-}
-
-export interface Inspector {
-  UserId: number;
-  Username: string;
-  FullName: string;
-  Email: string;
-  Role: string;
-  AssignedCount: number;
-}
-
-export interface Assignment {
-  AssignmentId: number;
-  UserId: number;
-  Username: string;
-  FullName: string;
-  AircraftId: number;
-  MSN: string;
-  Registration: string;
-  AircraftType: string;
-  AssignedDate: string;
 }
 
 export interface LoginResponse {
@@ -203,21 +192,15 @@ export const api = {
   getSubCategories:   (catId = '1')   => request<SubCategory[]>(`/subcategories?catId=${catId}`),
   getParts:           (subCatId: string, aircraftId: number) =>
     request<Part[]>(`/parts?subCatId=${subCatId}&aircraftId=${aircraftId}`),
-  getIssueTypes:      ()              => request<IssueType[]>('/issues'),
-  getDashboard:       ()              => request<Dashboard>('/dashboard'),
-
-  // ── Admin / assignment APIs ───────────────────────────────────────────────
-  getInspectors:      ()              => request<Inspector[]>('/users/inspectors'),
-  getAssignments:     (userId: number) => request<Assignment[]>(`/assignments?userId=${userId}`),
-  saveAssignments:    (userId: number, aircraftIds: number[]) =>
-    request<{ message: string }>('/assignments', {
-      method: 'POST',
-      body: JSON.stringify({ userId, aircraftIds }),
-    }),
+  getIssueTypes:         ()                   => request<IssueType[]>('/issues'),
+  getDashboard:          ()                   => request<Dashboard>('/dashboard'),
+  getInspectionTotals:   (aircraftId: number) => request<InspectionTotals>(`/inspections/totals/${aircraftId}`),
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   // Login uses its own fetch (not request()) so that a 401 wrong-credentials
   // response throws an error containing "401" rather than "Session expired".
+  // For other failures (e.g. 403 non-inspector) the server's message is
+  // appended so the sign-in screen can surface it.
   async login(username: string, password: string): Promise<LoginResponse> {
     const res = await fetch(`${API_BASE_URL}/auth/login`, {
       method:  'POST',
@@ -225,7 +208,12 @@ export const api = {
       body:    JSON.stringify({ username, password }),
     });
     if (!res.ok) {
-      throw new Error(String(res.status));
+      let serverMsg = '';
+      try {
+        const body = await res.json();
+        serverMsg = body?.error?.message ?? '';
+      } catch { /* non-JSON body */ }
+      throw new Error(serverMsg ? `${res.status}: ${serverMsg}` : String(res.status));
     }
     return res.json() as Promise<LoginResponse>;
   },
@@ -268,12 +256,21 @@ export const api = {
     const headers: Record<string, string> = {};
     if (_authToken) headers['Authorization'] = `Bearer ${_authToken}`;
 
-    const res = await fetch(`${API_BASE_URL}/inspections/upload`, {
-      method:  'POST',
-      headers,
-      body:    form,
-    });
-    if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-    return res.json() as Promise<UploadResult>;
+    // Abort a stalled upload so one half-open socket can't freeze the whole
+    // sync run; the row simply stays queued and retries on the next pass.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${API_BASE_URL}/inspections/upload`, {
+        method:  'POST',
+        headers,
+        body:    form,
+        signal:  controller.signal,
+      });
+      if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+      return res.json() as Promise<UploadResult>;
+    } finally {
+      clearTimeout(timer);
+    }
   },
 };

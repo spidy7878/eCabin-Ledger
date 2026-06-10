@@ -7,15 +7,16 @@ import * as ImagePicker from "expo-image-picker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import Button from "../../components/Button";
-import WorkflowProgress from "../../components/WorkflowProgress";
 import { spacing } from "../../constants/spacing";
 import { colors } from "../../constants/colors";
 import { api, AttendantSeat as AttendantSeatType, Part, IssueType } from "../../services/api";
 import { useAircraft } from "../../context/AircraftContext";
 import { useAuth } from "../../context/AuthContext";
 import { useWorkflow } from "../../context/WorkflowContext";
-import { enqueueImage } from "../../db/imageQueue";
+import { enqueueImage, getImagesForZone, getImagesForItem, deleteImage, InspectionImage } from "../../db/imageQueue";
 import { startSync } from "../../services/syncService";
+import { useInspectionProgress } from "../../hooks/useInspectionProgress";
+import ZoneProgressBar from "../../components/ZoneProgressBar";
 
 // ─── Reusable sub-components ────────────────────────────────────────────────
 
@@ -56,8 +57,9 @@ export default function Attendant() {
   const insets = useSafeAreaInsets();
   const { selectedAircraft } = useAircraft();
   const { user } = useAuth();
-  const { isWorkflow, endWorkflow } = useWorkflow();
+  const { isWorkflow } = useWorkflow();
   const navigation = useNavigation();
+  const { progress, refresh } = useInspectionProgress(selectedAircraft?.AircraftId);
 
   // ── zone (attendant seats from DB) ──
   const [attendantSeats, setAttendantSeats] = useState<AttendantSeatType[]>([]);
@@ -80,6 +82,7 @@ export default function Attendant() {
   const [images, setImages] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [issueModalVisible, setIssueModalVisible] = useState(false);
+  const [submittedImages, setSubmittedImages] = useState<InspectionImage[]>([]);
 
   const registration = selectedAircraft?.Registration ?? "N/A";
 
@@ -119,14 +122,30 @@ export default function Attendant() {
 
     setLoadingItems(true);
     setActiveItem(null);
-    api.getParts(activeAttendantSeat.SubCatID, selectedAircraft.AircraftId)
-      .then((data) => {
-        setItems(data);
-        if (data.length > 0) setActiveItem(data[0].PartName);
+    Promise.all([
+      api.getParts(activeAttendantSeat.SubCatID, selectedAircraft.AircraftId),
+      getImagesForZone(selectedAircraft.AircraftId, "attendant", activeAttendantSeat.AttendantSeatId).catch(() => [] as any[]),
+    ])
+      .then(([parts, submitted]) => {
+        setItems(parts);
+        if (parts.length > 0) {
+          const done = new Set(submitted.map((img) => img.part_name));
+          const next = parts.find((p) => !done.has(p.PartName));
+          setActiveItem(next?.PartName ?? parts[0].PartName);
+        }
       })
       .catch(() => setItems([]))
       .finally(() => setLoadingItems(false));
   }, [activeAttendantSeat?.AttendantSeatId, selectedAircraft?.AircraftId]);
+
+  // Reset inspection state when aircraft changes
+  useEffect(() => {
+    setImages([]);
+    setSatisfaction(null);
+    setSelectedIssue(null);
+    setRemarks("");
+    setSubmittedImages([]);
+  }, [selectedAircraft?.AircraftId]);
 
   // Reset workflow when attendant seat changes
   useEffect(() => {
@@ -135,7 +154,45 @@ export default function Attendant() {
     setSatisfaction(null);
     setSelectedIssue(null);
     setRemarks("");
+    setSubmittedImages([]);
   }, [activeAttendantSeat?.AttendantSeatId]);
+
+  // Load previously submitted images for the active item
+  useEffect(() => {
+    if (!activeItem || !activeAttendantSeat || !selectedAircraft) {
+      setSubmittedImages([]);
+      return;
+    }
+    getImagesForItem(
+      selectedAircraft.AircraftId,
+      "attendant",
+      activeAttendantSeat.AttendantSeatId,
+      activeItem
+    ).then(setSubmittedImages).catch(() => {});
+  }, [activeItem, activeAttendantSeat?.AttendantSeatId, selectedAircraft?.AircraftId]);
+
+  const handleDeleteImage = (img: InspectionImage) => {
+    Alert.alert(
+      "Delete Image",
+      "Are you sure you want to delete this submitted image?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Yes, Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteImage(img.id);
+              setSubmittedImages((prev) => prev.filter((i) => i.id !== img.id));
+              refresh();
+            } catch {
+              Alert.alert("Error", "Failed to delete image.");
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const handleTakePhoto = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -183,6 +240,30 @@ export default function Attendant() {
       setSelectedIssue(null);
       setRemarks("");
       startSync().catch(() => {});
+      refresh();
+
+      // Auto-advance: jump to the next sub-item on this attendant seat; when its
+      // items are exhausted, move to the next attendant seat (whose first item is
+      // auto-selected by the parts effect).  Advance silently — only prompt once
+      // every attendant seat & item here is done (end of the whole inspection).
+      const itemIdx = items.findIndex((it) => it.PartName === activeItem);
+      if (itemIdx >= 0 && itemIdx < items.length - 1) {
+        setActiveItem(items[itemIdx + 1].PartName);
+        return;
+      }
+      const zoneIdx = attendantSeats.findIndex(
+        (s) => s.AttendantSeatId === activeAttendantSeat?.AttendantSeatId
+      );
+      if (zoneIdx >= 0 && zoneIdx < attendantSeats.length - 1) {
+        setActiveAttendantSeat(attendantSeats[zoneIdx + 1]);
+        return;
+      }
+
+      // Last item — reload submitted so button flips to "Submitted ✓"
+      getImagesForItem(
+        selectedAircraft.AircraftId, "attendant", activeAttendantSeat.AttendantSeatId, activeItem
+      ).then(setSubmittedImages).catch(() => {});
+
       if (isWorkflow) {
         Alert.alert(
           "Inspection Complete ✓",
@@ -191,10 +272,7 @@ export default function Attendant() {
             { text: "Add More", style: "cancel" },
             {
               text: "Done ✔️",
-              onPress: () => {
-                endWorkflow();
-                navigation.navigate("Home" as never);
-              },
+              onPress: () => navigation.navigate("Home" as never),
             },
           ]
         );
@@ -287,15 +365,14 @@ export default function Attendant() {
           paddingBottom: (insets.bottom || 0) + 100,
         }}
       >
-        {/* Workflow progress bar */}
-        {isWorkflow && <WorkflowProgress step={3} onExit={endWorkflow} />}
-
         {/* ── 1. Attendant Seat Zone ── */}
         <SectionTitle title={`SELECT ATTENDANT SEAT FOR ${registration}`} />
         {loadingSeats ? (
           <LoadingRow />
+        ) : !selectedAircraft ? (
+          <Text style={{ color: "#6B7280", marginBottom: 16, fontSize: 12 }}>No aircraft assigned. Select one on the Home tab.</Text>
         ) : attendantSeats.length === 0 ? (
-          <Text style={{ color: "#6B7280", marginBottom: 16, fontSize: 12 }}>No attendant seats found.</Text>
+          <Text style={{ color: "#6B7280", marginBottom: 16, fontSize: 12 }}>No attendant seats found for {registration}.</Text>
         ) : (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
             {attendantSeats.map((s) => (
@@ -324,6 +401,7 @@ export default function Attendant() {
             )}
           </View>
         )}
+        <ZoneProgressBar done={progress.attendant.done} total={progress.attendant.total} label="Attendant Progress" />
 
         {/* ── 2. Item Selection ── */}
         <SectionTitle title={`SELECT ITEM FOR ${activeAttendantSeat?.AttendantSeatCode ?? "—"}`} />
@@ -367,6 +445,42 @@ export default function Attendant() {
             </View>
           )}
 
+          {/* Previously Submitted Images */}
+          {submittedImages.length > 0 && (
+            <View style={{ marginBottom: 16 }}>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: "#6B7280", marginBottom: 8 }}>
+                ✅ SUBMITTED ({submittedImages.length}) — Tap × to remove
+              </Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                {submittedImages.map((img) => (
+                  <View key={img.id} style={{ width: 64, height: 64, borderRadius: 8, overflow: "visible" }}>
+                    <Image source={{ uri: img.local_uri }} style={{ width: 64, height: 64, borderRadius: 8 }} resizeMode="cover" />
+                    <View style={{
+                      position: "absolute", bottom: 2, left: 2,
+                      backgroundColor: img.sync_status === "synced" ? "#22C55E" : "#F59E0B",
+                      borderRadius: 3, paddingHorizontal: 3, paddingVertical: 1,
+                    }}>
+                      <Text style={{ fontSize: 7, color: "white", fontWeight: "700" }}>
+                        {img.sync_status === "synced" ? "SYNCED" : "PENDING"}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => handleDeleteImage(img)}
+                      style={{
+                        position: "absolute", right: -6, top: -6,
+                        backgroundColor: colors.danger, borderRadius: 10,
+                        width: 20, height: 20, alignItems: "center", justifyContent: "center", zIndex: 10,
+                      }}
+                    >
+                      <Text style={{ color: "white", fontSize: 10 }}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+              <View style={{ height: 1, backgroundColor: "#E5E7EB", marginTop: 12, marginBottom: 4 }} />
+            </View>
+          )}
+
           {/* Photos */}
           <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary, marginBottom: 12 }}>
             📸 TAKE MULTIPLE PICTURES{" "}
@@ -404,7 +518,7 @@ export default function Attendant() {
           {/* Satisfied / Not Satisfied */}
           <View style={{ flexDirection: "row", marginBottom: 20, gap: 12 }}>
             <TouchableOpacity
-              onPress={() => setSatisfaction("satisfied")}
+              onPress={() => { setSatisfaction("satisfied"); setSelectedIssue(null); setRemarks(""); }}
               style={{
                 flex: 1, paddingVertical: 12, borderRadius: 8, borderWidth: 1,
                 borderColor: satisfaction === "satisfied" ? "#22C55E" : colors.border,
@@ -431,42 +545,45 @@ export default function Attendant() {
             </TouchableOpacity>
           </View>
 
-          {/* Issue Type */}
-          <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary, marginBottom: 8 }}>
-            ⚠️ SELECT ISSUE TYPE
-          </Text>
-          <TouchableOpacity
-            onPress={() => setIssueModalVisible(true)}
-            style={{
-              borderWidth: 1,
-              borderColor: selectedIssue ? colors.primary : colors.border,
-              borderRadius: 8, padding: 12, marginBottom: 20,
-              flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-              backgroundColor: selectedIssue ? "#EEF2FF" : "white",
-            }}
-          >
-            <Text style={{ color: selectedIssue ? colors.primary : "#6B7280", fontWeight: selectedIssue ? "600" : "400", fontSize: 13 }}>
-              {selectedIssue ? selectedIssue.IssueName : "Select an issue…"}
-            </Text>
-            <Text style={{ color: "#6B7280" }}>▼</Text>
-          </TouchableOpacity>
+          {/* Issue Type + Remarks (only when Not Satisfied) */}
+          {satisfaction === "not_satisfied" && (
+            <>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary, marginBottom: 8 }}>
+                ⚠️ SELECT ISSUE TYPE
+              </Text>
+              <TouchableOpacity
+                onPress={() => setIssueModalVisible(true)}
+                style={{
+                  borderWidth: 1,
+                  borderColor: selectedIssue ? colors.primary : colors.border,
+                  borderRadius: 8, padding: 12, marginBottom: 20,
+                  flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+                  backgroundColor: selectedIssue ? "#EEF2FF" : "white",
+                }}
+              >
+                <Text style={{ color: selectedIssue ? colors.primary : "#6B7280", fontWeight: selectedIssue ? "600" : "400", fontSize: 13 }}>
+                  {selectedIssue ? selectedIssue.IssueName : "Select an issue…"}
+                </Text>
+                <Text style={{ color: "#6B7280" }}>▼</Text>
+              </TouchableOpacity>
 
-          {/* Remarks */}
-          <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary, marginBottom: 8 }}>
-            📝 REMARKS
-          </Text>
-          <TextInput
-            style={{
-              borderWidth: 1, borderColor: colors.border, borderRadius: 8,
-              padding: 12, height: 80, textAlignVertical: "top",
-              fontSize: 13, color: colors.text,
-            }}
-            placeholder="Describe the issue or add verification notes…"
-            placeholderTextColor="#9CA3AF"
-            multiline
-            value={remarks}
-            onChangeText={setRemarks}
-          />
+              <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary, marginBottom: 8 }}>
+                📝 REMARKS
+              </Text>
+              <TextInput
+                style={{
+                  borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+                  padding: 12, height: 80, textAlignVertical: "top",
+                  fontSize: 13, color: colors.text,
+                }}
+                placeholder="Describe the issue or add verification notes…"
+                placeholderTextColor="#9CA3AF"
+                multiline
+                value={remarks}
+                onChangeText={setRemarks}
+              />
+            </>
+          )}
         </View>
       </ScrollView>
 
@@ -480,9 +597,16 @@ export default function Attendant() {
         }}
       >
         <Button
-          title={submitting ? "Saving…" : "Submit"}
+          title={
+            submittedImages.length > 0 && images.length === 0 ? "Submitted ✓"
+            : submitting ? "Saving…" : "Submit"
+          }
           onPress={handleSubmit}
-          disabled={submitting}
+          disabled={submitting || (submittedImages.length > 0 && images.length === 0)}
+          style={
+            submittedImages.length > 0 && images.length === 0
+              ? { backgroundColor: "#22C55E" } : undefined
+          }
         />
       </View>
     </View>
