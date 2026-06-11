@@ -12,7 +12,9 @@ import { useNavigation } from "@react-navigation/native";
 import Card from "../../components/Card";
 import { spacing } from "../../constants/spacing";
 import { colors } from "../../constants/colors";
-import { api, Dashboard, AuditTask } from "../../services/api";
+import { Dashboard, AuditTask } from "../../services/api";
+import { cachedApi } from "../../services/cachedApi";
+import * as Network from "expo-network";
 import { useAircraft } from "../../context/AircraftContext";
 import { useAuth } from "../../context/AuthContext";
 import { useWorkflow } from "../../context/WorkflowContext";
@@ -265,9 +267,14 @@ export default function Home() {
   const [error, setError]               = useState<string | null>(null);
   const [queueStats, setQueueStats]     = useState({ pending: 0, synced: 0, failed: 0, total: 0 });
   const [syncing, setSyncing]           = useState(false);
+  const [isOffline, setIsOffline]       = useState(false);
 
   useEffect(() => {
-    api.getDashboard()
+    Network.getNetworkStateAsync().then((net) => {
+      setIsOffline(!net.isConnected || net.isInternetReachable === false);
+    }).catch(() => {});
+
+    cachedApi.getDashboard()
       .then(setDashboard)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -322,6 +329,27 @@ export default function Home() {
             <Text style={{ fontSize: 12, color: colors.danger }}>Sign Out</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Offline indicator — shown when device has no connectivity */}
+        {isOffline && (
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              backgroundColor: "#F1F5F9",
+              borderRadius: 10,
+              padding: 12,
+              marginBottom: 12,
+              borderWidth: 1,
+              borderColor: "#CBD5E1",
+            }}
+          >
+            <Text style={{ fontSize: 14, marginRight: 8 }}>📡</Text>
+            <Text style={{ fontSize: 12, color: "#475569", flex: 1 }}>
+              You are offline. Showing data from your last session. Photos will sync when you reconnect.
+            </Text>
+          </View>
+        )}
 
         {/* Sync status bar — informational only; sync happens automatically */}
         {queueStats.total > 0 && (

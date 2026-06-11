@@ -9,7 +9,8 @@ import { useNavigation } from "@react-navigation/native";
 import Button from "../../components/Button";
 import { spacing } from "../../constants/spacing";
 import { colors } from "../../constants/colors";
-import { api, Lavatory as LavatoryType, Part, IssueType } from "../../services/api";
+import { Lavatory as LavatoryType, Part, IssueType } from "../../services/api";
+import { cachedApi } from "../../services/cachedApi";
 import { useAircraft } from "../../context/AircraftContext";
 import { useAuth } from "../../context/AuthContext";
 import { useWorkflow } from "../../context/WorkflowContext";
@@ -86,7 +87,7 @@ export default function Lavatory() {
   useEffect(() => {
     if (!selectedAircraft) return;
     setLoadingLavs(true);
-    api.getLavatories(selectedAircraft.AircraftId)
+    cachedApi.getLavatories(selectedAircraft.AircraftId)
       .then((data) => {
         // Deduplicate by LavatoriesCode in case DB has duplicate rows
         const seen = new Set<string>();
@@ -102,7 +103,7 @@ export default function Lavatory() {
       .finally(() => setLoadingLavs(false));
 
     setLoadingIssues(true);
-    api.getIssueTypes()
+    cachedApi.getIssueTypes()
       .then(setIssueTypes)
       .catch(() => {})
       .finally(() => setLoadingIssues(false));
@@ -119,7 +120,7 @@ export default function Lavatory() {
     setLoadingItems(true);
     setActiveItem(null);
     Promise.all([
-      api.getParts(activeLav.SubCatID, selectedAircraft.AircraftId),
+      cachedApi.getParts(activeLav.SubCatID, selectedAircraft.AircraftId),
       getImagesForZone(selectedAircraft.AircraftId, "lavatory", activeLav.LavatoriesId).catch(() => [] as any[]),
     ])
       .then(([parts, submitted]) => {
@@ -152,6 +153,14 @@ export default function Lavatory() {
     setRemarks("");
     setSubmittedImages([]);
   }, [activeLav?.LavatoriesId]);
+
+  // Clear unsaved photos when inspector switches to a different item
+  useEffect(() => {
+    setImages([]);
+    setSatisfaction(null);
+    setSelectedIssue(null);
+    setRemarks("");
+  }, [activeItem]);
 
   // Load previously submitted images for the active item
   useEffect(() => {

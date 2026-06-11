@@ -12,7 +12,8 @@ import { colors } from "../../constants/colors";
 import { useAircraft } from "../../context/AircraftContext";
 import { useAuth } from "../../context/AuthContext";
 import { useWorkflow } from "../../context/WorkflowContext";
-import { api, SubCategory, Part, IssueType } from "../../services/api";
+import { SubCategory, Part, IssueType } from "../../services/api";
+import { cachedApi } from "../../services/cachedApi";
 import { enqueueImage, getImagesForZone, getImagesForItem, deleteImage, InspectionImage } from "../../db/imageQueue";
 import { startSync } from "../../services/syncService";
 import { useInspectionProgress } from "../../hooks/useInspectionProgress";
@@ -87,7 +88,7 @@ export default function Seats() {
   // Load zones + issue types on mount
   useEffect(() => {
     setLoadingZones(true);
-    api.getSubCategories("1")
+    cachedApi.getSubCategories("1")
       .then((data) => {
         setZones(data);
         if (data.length > 0) setActiveZone(data[0]);
@@ -96,7 +97,7 @@ export default function Seats() {
       .finally(() => setLoadingZones(false));
 
     setLoadingIssues(true);
-    api.getIssueTypes()
+    cachedApi.getIssueTypes()
       .then(setIssueTypes)
       .catch((err) => console.error("issues error:", err))
       .finally(() => setLoadingIssues(false));
@@ -120,6 +121,14 @@ export default function Seats() {
     setSubmittedImages([]);
   }, [activeZone?.SubCatID]);
 
+  // Clear unsaved photos when inspector switches to a different item
+  useEffect(() => {
+    setImages([]);
+    setSatisfaction(null);
+    setSelectedIssue(null);
+    setRemarks("");
+  }, [activeItem]);
+
   // Load previously submitted images for the active item
   useEffect(() => {
     if (!activeItem || !activeZone || !selectedAircraft) {
@@ -140,7 +149,7 @@ export default function Seats() {
     setLoadingItems(true);
     setActiveItem(null);
     Promise.all([
-      api.getParts(activeZone.SubCatID, selectedAircraft.AircraftId),
+      cachedApi.getParts(activeZone.SubCatID, selectedAircraft.AircraftId),
       getImagesForZone(selectedAircraft.AircraftId, "seats", parseInt(activeZone.SubCatID, 10)).catch(() => [] as any[]),
     ])
       .then(([parts, submitted]) => {

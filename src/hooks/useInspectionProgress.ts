@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { api, InspectionTotals } from "../services/api";
+import { InspectionTotals } from "../services/api";
+import { cachedApi } from "../services/cachedApi";
 import { getInspectionProgress } from "../db/imageQueue";
 
 export interface ZoneProgress {
@@ -36,7 +37,7 @@ export function useInspectionProgress(aircraftId: number | undefined) {
     }
     Promise.all([
       getInspectionProgress(aircraftId),
-      api.getInspectionTotals(aircraftId).catch(() => ZERO_TOTALS),
+      cachedApi.getInspectionTotals(aircraftId).catch(() => ZERO_TOTALS),
     ]).then(([done, totals]) => {
       setProgress({
         seats:     { done: done.seats,     total: totals.seats },

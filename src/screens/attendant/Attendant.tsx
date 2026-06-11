@@ -9,7 +9,8 @@ import { useNavigation } from "@react-navigation/native";
 import Button from "../../components/Button";
 import { spacing } from "../../constants/spacing";
 import { colors } from "../../constants/colors";
-import { api, AttendantSeat as AttendantSeatType, Part, IssueType } from "../../services/api";
+import { AttendantSeat as AttendantSeatType, Part, IssueType } from "../../services/api";
+import { cachedApi } from "../../services/cachedApi";
 import { useAircraft } from "../../context/AircraftContext";
 import { useAuth } from "../../context/AuthContext";
 import { useWorkflow } from "../../context/WorkflowContext";
@@ -90,7 +91,7 @@ export default function Attendant() {
   useEffect(() => {
     if (!selectedAircraft) return;
     setLoadingSeats(true);
-    api.getAttendantSeats(selectedAircraft.AircraftId)
+    cachedApi.getAttendantSeats(selectedAircraft.AircraftId)
       .then((data) => {
         // Deduplicate by AttendantSeatCode in case DB has duplicate rows
         const seen = new Set<string>();
@@ -106,7 +107,7 @@ export default function Attendant() {
       .finally(() => setLoadingSeats(false));
 
     setLoadingIssues(true);
-    api.getIssueTypes()
+    cachedApi.getIssueTypes()
       .then(setIssueTypes)
       .catch(() => {})
       .finally(() => setLoadingIssues(false));
@@ -123,7 +124,7 @@ export default function Attendant() {
     setLoadingItems(true);
     setActiveItem(null);
     Promise.all([
-      api.getParts(activeAttendantSeat.SubCatID, selectedAircraft.AircraftId),
+      cachedApi.getParts(activeAttendantSeat.SubCatID, selectedAircraft.AircraftId),
       getImagesForZone(selectedAircraft.AircraftId, "attendant", activeAttendantSeat.AttendantSeatId).catch(() => [] as any[]),
     ])
       .then(([parts, submitted]) => {
@@ -156,6 +157,14 @@ export default function Attendant() {
     setRemarks("");
     setSubmittedImages([]);
   }, [activeAttendantSeat?.AttendantSeatId]);
+
+  // Clear unsaved photos when inspector switches to a different item
+  useEffect(() => {
+    setImages([]);
+    setSatisfaction(null);
+    setSelectedIssue(null);
+    setRemarks("");
+  }, [activeItem]);
 
   // Load previously submitted images for the active item
   useEffect(() => {

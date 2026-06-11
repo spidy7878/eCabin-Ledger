@@ -19,8 +19,10 @@ const store = {
   },
 };
 
-const TOKEN_KEY = "ecabin_auth_token";
-const USER_KEY  = "ecabin_auth_user";
+const TOKEN_KEY    = "ecabin_auth_token";
+const USER_KEY     = "ecabin_auth_user";
+const OFFLINE_UNAME = "ecabin_offline_username";
+const OFFLINE_PASS  = "ecabin_offline_password";
 
 interface AuthContextValue {
   user:     AuthUser | null;
@@ -65,17 +67,56 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = async (username: string, password: string) => {
-    const res = await api.login(username, password);
-    await store.set(TOKEN_KEY, res.token);
-    await store.set(USER_KEY, JSON.stringify(res.user));
-    setAuthToken(res.token);
-    setToken(res.token);
-    setUser(res.user);
+    try {
+      const res = await api.login(username, password);
+      // Persist session + credentials for offline re-auth
+      await store.set(TOKEN_KEY, res.token);
+      await store.set(USER_KEY, JSON.stringify(res.user));
+      await store.set(OFFLINE_UNAME, username);
+      await store.set(OFFLINE_PASS, password);
+      setAuthToken(res.token);
+      setToken(res.token);
+      setUser(res.user);
+    } catch (e: any) {
+      const msg: string = e?.message ?? "";
+      const isNetworkError =
+        e instanceof TypeError ||
+        /Network request failed|Failed to fetch|NetworkError/i.test(msg);
+
+      if (isNetworkError) {
+        // Try offline authentication using cached credentials
+        const [storedUser, storedPass, cachedToken, cachedUserJson] =
+          await Promise.all([
+            store.get(OFFLINE_UNAME),
+            store.get(OFFLINE_PASS),
+            store.get(TOKEN_KEY),
+            store.get(USER_KEY),
+          ]);
+
+        if (
+          storedUser === username &&
+          storedPass === password &&
+          cachedToken &&
+          cachedUserJson
+        ) {
+          setAuthToken(cachedToken);
+          setToken(cachedToken);
+          setUser(JSON.parse(cachedUserJson));
+          return;
+        }
+      }
+
+      throw e;
+    }
   };
 
   const logout = async () => {
-    await store.remove(TOKEN_KEY).catch(() => {});
-    await store.remove(USER_KEY).catch(() => {});
+    await Promise.all([
+      store.remove(TOKEN_KEY).catch(() => {}),
+      store.remove(USER_KEY).catch(() => {}),
+      store.remove(OFFLINE_UNAME).catch(() => {}),
+      store.remove(OFFLINE_PASS).catch(() => {}),
+    ]);
     setAuthToken(null);
     setToken(null);
     setUser(null);

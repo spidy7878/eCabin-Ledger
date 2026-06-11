@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { api, Aircraft } from "../services/api";
+import { Aircraft } from "../services/api";
+import { cachedApi } from "../services/cachedApi";
 import { useAuth } from "./AuthContext";
 
 interface AircraftContextValue {
@@ -37,7 +38,7 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
     setLoadingAircraft(true);
     setError(null);
     try {
-      const list = await api.getAircraft();
+      const list = await cachedApi.getAircraft();
       setAircraftList(list);
       // Keep the current selection if it's still valid; otherwise default to the
       // first assigned aircraft so the zone screens have something to fetch.
