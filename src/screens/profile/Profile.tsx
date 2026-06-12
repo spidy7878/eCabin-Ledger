@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { spacing } from "../../constants/spacing";
 import { colors } from "../../constants/colors";
@@ -7,7 +7,6 @@ import { Ionicons, MaterialIcons, Feather } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
 import { getQueueStats } from "../../db/imageQueue";
-import { startSync } from "../../services/syncService";
 
 type QueueStats = { pending: number; uploading: number; synced: number; failed: number; total: number };
 
@@ -17,7 +16,6 @@ export default function Profile() {
   const { user, logout } = useAuth();
 
   const [queueStats, setQueueStats] = useState<QueueStats>({ pending: 0, uploading: 0, synced: 0, failed: 0, total: 0 });
-  const [syncing, setSyncing]       = useState(false);
 
   useEffect(() => {
     if (user) refreshStats();
@@ -25,14 +23,6 @@ export default function Profile() {
 
   const refreshStats = () => {
     if (user) getQueueStats(user.userId).then(setQueueStats).catch(() => {});
-  };
-
-  const handleSync = async () => {
-    if (syncing) return;
-    setSyncing(true);
-    await startSync().catch(() => {});
-    refreshStats();
-    setSyncing(false);
   };
 
   const initials = user
@@ -125,24 +115,13 @@ export default function Profile() {
             ))}
           </View>
 
-          {/* Sync now button */}
-          <TouchableOpacity
-            onPress={handleSync}
-            disabled={syncing}
-            style={[
-              styles.actionButton,
-              { backgroundColor: syncing ? "#E5E7EB" : colors.primary },
-            ]}
-          >
-            {syncing ? (
-              <ActivityIndicator size="small" color={colors.primary} />
-            ) : (
-              <Feather name="upload-cloud" size={16} color="#FFF" style={{ marginRight: 8 }} />
-            )}
-            <Text style={{ color: syncing ? "#6B7280" : "#FFF", fontWeight: "600", fontSize: 14 }}>
-              {syncing ? "Syncing…" : "Sync Now"}
+          {/* Auto-sync note — uploads happen automatically; no manual button. */}
+          <View style={styles.autoSyncRow}>
+            <Feather name="refresh-cw" size={14} color="#6B7280" style={{ marginRight: 8 }} />
+            <Text style={styles.autoSyncText}>
+              Images upload automatically whenever you're online.
             </Text>
-          </TouchableOpacity>
+          </View>
 
         </View>
 
@@ -177,12 +156,19 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: colors.primary,
   },
-  actionButton: {
+  autoSyncRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: "#F0F4F8",
     borderRadius: 10,
+  },
+  autoSyncText: {
+    color: "#6B7280",
+    fontSize: 12,
+    fontWeight: "500",
   },
   divider: {
     height: 1,

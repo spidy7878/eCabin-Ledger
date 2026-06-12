@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { Aircraft } from "../services/api";
-import { cachedApi } from "../services/cachedApi";
+import { cachedApi, prefetchAircraftData } from "../services/cachedApi";
 import { useAuth } from "./AuthContext";
 
 interface AircraftContextValue {
@@ -45,6 +45,10 @@ export function AircraftProvider({ children }: { children: React.ReactNode }) {
       setSelectedAircraft((prev) =>
         prev && list.some((a) => a.AircraftId === prev.AircraftId) ? prev : list[0] ?? null
       );
+      // Warm the offline cache for EVERY assigned aircraft (all zones + items),
+      // so the full inspection works offline regardless of which zones/aircraft
+      // the inspector has opened. Fire-and-forget; no-op when offline.
+      list.forEach((a) => { prefetchAircraftData(a.AircraftId).catch(() => {}); });
       return list;
     } catch (e: any) {
       setError(e?.message ?? "Failed to load aircraft.");

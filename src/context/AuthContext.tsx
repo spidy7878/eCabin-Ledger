@@ -19,10 +19,18 @@ const store = {
   },
 };
 
+// Active session — cleared on logout so the app returns to the login screen
+// and api.ts stops sending the token.
 const TOKEN_KEY    = "ecabin_auth_token";
 const USER_KEY     = "ecabin_auth_user";
+
+// Offline credential vault — survives logout so the inspector can re-authenticate
+// with no internet. Only ever overwritten by the next successful ONLINE login
+// (a different user logging in online replaces the vault with their own).
 const OFFLINE_UNAME = "ecabin_offline_username";
 const OFFLINE_PASS  = "ecabin_offline_password";
+const OFFLINE_TOKEN = "ecabin_offline_token";
+const OFFLINE_USER  = "ecabin_offline_user";
 
 interface AuthContextValue {
   user:     AuthUser | null;
@@ -69,11 +77,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = async (username: string, password: string) => {
     try {
       const res = await api.login(username, password);
-      // Persist session + credentials for offline re-auth
+      const userJson = JSON.stringify(res.user);
+      // Persist the active session...
       await store.set(TOKEN_KEY, res.token);
-      await store.set(USER_KEY, JSON.stringify(res.user));
+      await store.set(USER_KEY, userJson);
+      // ...and refresh the offline vault so a later offline login can restore it.
       await store.set(OFFLINE_UNAME, username);
       await store.set(OFFLINE_PASS, password);
+      await store.set(OFFLINE_TOKEN, res.token);
+      await store.set(OFFLINE_USER, userJson);
       setAuthToken(res.token);
       setToken(res.token);
       setUser(res.user);
@@ -84,13 +96,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         /Network request failed|Failed to fetch|NetworkError/i.test(msg);
 
       if (isNetworkError) {
-        // Try offline authentication using cached credentials
+        // Try offline authentication against the offline vault. These keys
+        // persist across logout, so offline login works even after signing out.
         const [storedUser, storedPass, cachedToken, cachedUserJson] =
           await Promise.all([
             store.get(OFFLINE_UNAME),
             store.get(OFFLINE_PASS),
-            store.get(TOKEN_KEY),
-            store.get(USER_KEY),
+            store.get(OFFLINE_TOKEN),
+            store.get(OFFLINE_USER),
           ]);
 
         if (
@@ -99,6 +112,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           cachedToken &&
           cachedUserJson
         ) {
+          // Re-establish the active session from the vault.
+          await store.set(TOKEN_KEY, cachedToken);
+          await store.set(USER_KEY, cachedUserJson);
           setAuthToken(cachedToken);
           setToken(cachedToken);
           setUser(JSON.parse(cachedUserJson));
@@ -111,11 +127,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
+    // Clear only the active session. The offline vault (OFFLINE_*) is left
+    // intact so the inspector can log back in with no internet. It gets
+    // overwritten by the next successful online login.
     await Promise.all([
       store.remove(TOKEN_KEY).catch(() => {}),
       store.remove(USER_KEY).catch(() => {}),
-      store.remove(OFFLINE_UNAME).catch(() => {}),
-      store.remove(OFFLINE_PASS).catch(() => {}),
     ]);
     setAuthToken(null);
     setToken(null);

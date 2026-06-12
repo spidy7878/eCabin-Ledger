@@ -128,3 +128,40 @@ export const cachedApi = {
       () => api.getInspectionTotals(aircraftId)
     ),
 };
+
+/**
+ * Warm the offline cache with EVERY zone and its inspection items for an
+ * aircraft — Seats, Galley, Lavatory AND Attendant — so the whole inspection
+ * works offline even for zones the inspector hasn't opened yet.
+ *
+ * Without this, `cachedApi` only caches what was actually viewed, so an
+ * inspector who goes offline without first tapping every zone sees empty
+ * Galley/Lavatory/Attendant lists. Call this whenever online (e.g. on login /
+ * aircraft load). Best-effort: each call already falls back to its own cache,
+ * and any failure is swallowed so we never block the UI.
+ */
+export async function prefetchAircraftData(aircraftId: number): Promise<void> {
+  try {
+    const [subs, , galleys, lavatories, attendants] = await Promise.all([
+      cachedApi.getSubCategories("1"),
+      cachedApi.getIssueTypes(),
+      cachedApi.getGalleys(aircraftId),
+      cachedApi.getLavatories(aircraftId),
+      cachedApi.getAttendantSeats(aircraftId),
+      cachedApi.getInspectionTotals(aircraftId).catch(() => null),
+    ]);
+
+    // Every distinct SubCatID across all four zone types → fetch its parts.
+    const subCatIds = new Set<string>();
+    subs.forEach((s) => s.SubCatID && subCatIds.add(s.SubCatID));
+    galleys.forEach((g) => g.SubCatID && subCatIds.add(g.SubCatID));
+    lavatories.forEach((l) => l.SubCatID && subCatIds.add(l.SubCatID));
+    attendants.forEach((a) => a.SubCatID && subCatIds.add(a.SubCatID));
+
+    await Promise.allSettled(
+      [...subCatIds].map((id) => cachedApi.getParts(id, aircraftId))
+    );
+  } catch {
+    // Offline or a partial failure — keep whatever the cache already holds.
+  }
+}

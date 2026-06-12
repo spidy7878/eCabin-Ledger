@@ -125,7 +125,7 @@ const CREATE_TABLE_SQL = `
   CREATE INDEX IF NOT EXISTS idx_zone               ON inspection_images(zone_type, zone_id);
 `;
 
-let _db: SQLite.SQLiteDatabase | null = null;
+let _dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 async function columnExists(db: SQLite.SQLiteDatabase, column: string): Promise<boolean> {
   const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(inspection_images)`);
@@ -170,8 +170,7 @@ async function runMigrations(db: SQLite.SQLiteDatabase): Promise<void> {
   }
 }
 
-async function getDb(): Promise<SQLite.SQLiteDatabase> {
-  if (_db) return _db;
+async function openAndInit(): Promise<SQLite.SQLiteDatabase> {
   const db = await SQLite.openDatabaseAsync(DB_NAME);
   // WAL = durable, crash-safe writes (a power loss mid-write can't corrupt the DB).
   await db.execAsync(`PRAGMA journal_mode = WAL;`);
@@ -181,8 +180,31 @@ async function getDb(): Promise<SQLite.SQLiteDatabase> {
   await db.execAsync(CREATE_TABLE_SQL);
   await runMigrations(db);
 
-  _db = db;
-  return _db;
+  return db;
+}
+
+/**
+ * Returns the singleton DB handle, opening + migrating it exactly once.
+ *
+ * ⚠️  We cache the in-flight PROMISE, not the resolved database.  The screens
+ * fire several queries concurrently on mount (getImagesForZone, the progress
+ * hook, enqueueImage on submit, …); if we cached only the resolved value, every
+ * one of those callers would see `null` before the first open finished and each
+ * would call `openDatabaseAsync` itself — multiple connections racing on the
+ * WAL switch + ALTER TABLE migrations against the same file.  That race leaves a
+ * half-initialised native handle and surfaces on a real device as
+ * "NativeDatabase.prepareAsync has been rejected … NullPointerException".
+ * Sharing one promise serialises open+migrate for all callers.
+ */
+function getDb(): Promise<SQLite.SQLiteDatabase> {
+  if (!_dbPromise) {
+    _dbPromise = openAndInit().catch((e) => {
+      // Don't cache a failed init — let a later call retry from scratch.
+      _dbPromise = null;
+      throw e;
+    });
+  }
+  return _dbPromise;
 }
 
 // ── Ensure image directory exists ─────────────────────────────────────────────
